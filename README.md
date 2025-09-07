@@ -35,10 +35,11 @@ cp env.example .env
 Create a `.env` file with your API keys:
 
 ```bash
-# Required for OpenAI models
-OPENAI_API_KEY=your_openai_api_key_here
+# Required for OpenRouter models
+OPENROUTER_API_KEY=your_openrouter_api_key_here
 
 # Optional for other models
+OPENAI_API_KEY=your_openai_api_key_here
 ANTHROPIC_API_KEY=your_anthropic_api_key_here
 GOOGLE_API_KEY=your_google_api_key_here
 ```
@@ -82,7 +83,7 @@ curl -X POST "http://localhost:8000/chat" \
      -H "Content-Type: application/json" \
      -d '{
        "message": "Hello, how are you?",
-       "model": "openai/gpt-4o",
+       "model": "openrouter/qwen/qwen3-235b-a22b",
        "max_tokens": 1024
      }'
 ```
@@ -100,6 +101,7 @@ The application follows the pattern from the reference implementation:
 
 The application supports any model that litellm supports, including:
 
+- OpenRouter: `openrouter/qwen/qwen3-235b-a22b` (default)
 - OpenAI: `openai/gpt-4o`, `openai/gpt-3.5-turbo`
 - Anthropic: `anthropic/claude-3-opus`, `anthropic/claude-3-sonnet`
 - Google: `gemini/gemini-pro`

@@ -3,17 +3,28 @@ import os
 from typing import Dict, Any
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+import litellm
 from litellm import completion
 from dotenv import load_dotenv
+from simple_travel_agent import run_simple_travel_agent
+from travel_agent import run_travel_agent_with_input
+#import pydevd_pycharm
 
 # Load environment variables
+#pydevd_pycharm.settrace('localhost', port=12388, stdoutToServer=True, stderrToServer=True)
 load_dotenv()
+litellm.set_verbose=True
+#litellm.turn_on_debug()
+
+
+# Configure litellm for OpenRouter function calling
+litellm.add_function_to_prompt = True
 
 app = FastAPI(title="AI Talk Travel Agent", description="A FastAPI application that forwards messages to neural networks using litellm")
 
 class MessageRequest(BaseModel):
     message: str
-    model: str = "openai/gpt-4o"
+    model: str = "openrouter/deepseek/deepseek-chat-v3.1:free"
     max_tokens: int = 1024
 
 class MessageResponse(BaseModel):
@@ -21,7 +32,14 @@ class MessageResponse(BaseModel):
     model_used: str
     tokens_used: int = None
 
-def generate_ai_response(message: str, model: str = "openai/gpt-4o", max_tokens: int = 1024) -> Dict[str, Any]:
+class TravelAgentRequest(BaseModel):
+    message: str
+
+class TravelAgentResponse(BaseModel):
+    memory: list
+    status: str
+
+def generate_ai_response(message: str, model: str = "openrouter/qwen/qwen3-235b-a22b:free", max_tokens: int = 1024) -> Dict[str, Any]:
     """
     Generate response using litellm, following the pattern from the reference implementation
     """
@@ -58,6 +76,7 @@ async def root():
         "description": "Send messages to neural networks using litellm",
         "endpoints": {
             "/chat": "POST - Send a message and get AI response",
+            "/travel-agent": "POST - Run travel agent with trip purpose interview",
             "/health": "GET - Check API health"
         }
     }
@@ -79,6 +98,30 @@ async def chat(request: MessageRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/travel-agent", response_model=TravelAgentResponse)
+async def travel_agent(request: TravelAgentRequest):
+    """
+    Run the travel agent to interview user about trip purpose
+    """
+    try:
+        # Run the travel agent with the provided message
+        final_memory = run_travel_agent_with_input(request.message)
+
+        # Convert memory to list format for JSON response
+        memory_list = []
+        for item in final_memory.get_memories():
+            memory_list.append({
+                "type": item["type"],
+                "content": item["content"]
+            })
+
+        return TravelAgentResponse(
+            memory=memory_list,
+            status="completed"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error running travel agent: {str(e)}")
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
@@ -86,4 +129,4 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8001)
