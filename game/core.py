@@ -26,24 +26,24 @@ def to_openai_tools(tools_metadata: List[dict]):
 
 def get_tool_metadata(func, tool_name=None, description=None, parameters_override=None, terminal=False, tags=None):
     """
-    Извлекает метаданные для функции для использования в регистрации инструментов.
+    Extracts metadata for a function to use in tool registration.
 
     Parameters:
-        func (function): Функция, из которой извлекаются метаданные.
-        tool_name (str, optional): Название инструмента. По умолчанию имя функции.
-        description (str, optional): Описание инструмента. По умолчанию docstring функции.
-        parameters_override (dict, optional): Переопределение схемы аргументов. По умолчанию динамически выводимая схема.
-        terminal (bool, optional): Является ли инструмент терминальным. По умолчанию False.
-        tags (List[str], optional): Список тегов для связи с инструментом.
+        func (function): The function to extract metadata from.
+        tool_name (str, optional): The name of the tool. Defaults to the function name.
+        description (str, optional): Description of the tool. Defaults to the function's docstring.
+        parameters_override (dict, optional): Override for the argument schema. Defaults to dynamically inferred schema.
+        terminal (bool, optional): Whether the tool is terminal. Defaults to False.
+        tags (List[str], optional): List of tags to associate with the tool.
 
     Returns:
-        dict: Словарь, содержащий метаданные об инструменте, включая описание, схему аргументов и функцию.
+        dict: A dictionary containing metadata about the tool, including description, args schema, and the function.
     """
     # Default tool_name to the function name if not provided
     tool_name = tool_name or func.__name__
 
-    # Описание по умолчанию - docstring функции, если не предоставлено
-    description = description or (func.__doc__.strip() if func.__doc__ else "Описание не предоставлено.")
+    # Default description to the function's docstring if not provided
+    description = description or (func.__doc__.strip() if func.__doc__ else "No description provided.")
 
     # Discover the function's signature and type hints if no args_override is provided
     if parameters_override is None:
@@ -102,17 +102,17 @@ def get_tool_metadata(func, tool_name=None, description=None, parameters_overrid
 
 def register_tool(tool_name=None, description=None, parameters_override=None, terminal=False, tags=None):
     """
-    Декоратор для динамической регистрации функции в словаре инструментов с ее параметрами, схемой и docstring.
+    A decorator to dynamically register a function in the tools dictionary with its parameters, schema, and docstring.
 
     Parameters:
-        tool_name (str, optional): Название инструмента для регистрации. По умолчанию имя функции.
-        description (str, optional): Переопределение описания инструмента. По умолчанию docstring функции.
-        parameters_override (dict, optional): Переопределение схемы аргументов. По умолчанию динамически выводимая схема.
-        terminal (bool, optional): Является ли инструмент терминальным. По умолчанию False.
-        tags (List[str], optional): Список тегов для связи с инструментом.
+        tool_name (str, optional): The name of the tool to register. Defaults to the function name.
+        description (str, optional): Override for the tool's description. Defaults to the function's docstring.
+        parameters_override (dict, optional): Override for the argument schema. Defaults to dynamically inferred schema.
+        terminal (bool, optional): Whether the tool is terminal. Defaults to False.
+        tags (List[str], optional): List of tags to associate with the tool.
 
     Returns:
-        function: Обернутая функция.
+        function: The wrapped function.
     """
     def decorator(func):
         # Use the reusable function to extract metadata
@@ -160,33 +160,58 @@ def generate_response(prompt: Prompt) -> str:
 
     # Ensure litellm is configured for OpenRouter
     import litellm
-    litellm.add_function_to_prompt = True
+    # Note: add_function_to_prompt can cause issues with newer litellm versions
+    # litellm.add_function_to_prompt = True
+    litellm.set_verbose = True
 
-    if not tools:
-        response = completion(
-            model="openrouter/qwen/qwen3-235b-a22b:free",
-            messages=messages,
-            max_tokens=1024
-        )
-        result = response.choices[0].message.content
-    else:
-        response = completion(
-            model="openrouter/qwen/qwen3-235b-a22b:free",
-            messages=messages,
-            tools=tools,
-            max_tokens=1024
-        )
-
-        if response.choices[0].message.tool_calls:
-            tool = response.choices[0].message.tool_calls[0]
-            result = {
-                "tool": tool.function.name,
-                "args": json.loads(tool.function.arguments),
-            }
-            result = json.dumps(result)
-        else:
+    try:
+        if not tools:
+            response = completion(
+                model="openrouter/google/gemini-2.0-flash-exp:free",
+                messages=messages,
+                max_tokens=1024
+            )
             result = response.choices[0].message.content
+        else:
+            # Convert tools to the correct format for litellm
+            formatted_tools = []
+            for tool in tools:
+                if isinstance(tool, dict) and "function" in tool:
+                    formatted_tools.append(tool)
+                else:
+                    # Handle different tool formats
+                    formatted_tools.append(tool)
+            
+            response = completion(
+                model="openrouter/google/gemini-2.0-flash-exp:free",
+                messages=messages,
+                tools=formatted_tools,
+                max_tokens=1024
+            )
 
+            if hasattr(response.choices[0].message, 'tool_calls') and response.choices[0].message.tool_calls:
+                tool = response.choices[0].message.tool_calls[0]
+                result = {
+                    "tool": tool.function.name,
+                    "args": json.loads(tool.function.arguments),
+                }
+                result = json.dumps(result)
+            else:
+                result = response.choices[0].message.content
+
+    except Exception as e:
+        print(f"Error in generate_response: {e}")
+        # Fallback to simple completion without tools
+        try:
+            response = completion(
+                model="openrouter/google/gemini-2.0-flash-exp:free",
+                messages=messages,
+                max_tokens=1024
+            )
+            result = response.choices[0].message.content
+        except Exception as fallback_error:
+            print(f"Fallback error: {fallback_error}")
+            result = "Error: Unable to generate response"
 
     return result
 
@@ -212,7 +237,7 @@ class Action:
         self.parameters = parameters
 
     def execute(self, **args) -> Any:
-        """Выполнить функцию действия"""
+        """Execute the action's function"""
         return self.function(**args)
 
 
@@ -227,7 +252,7 @@ class ActionRegistry:
         return self.actions.get(name, None)
 
     def get_actions(self) -> List[Action]:
-        """Получить все зарегистрированные действия"""
+        """Get all registered actions"""
         return list(self.actions.values())
 
 
@@ -236,15 +261,15 @@ class Memory:
         self.items = []  # Basic conversation histor
 
     def add_memory(self, memory: dict):
-        """Добавить память в рабочую память"""
+        """Add memory to working memory"""
         self.items.append(memory)
 
     def get_memories(self, limit: int = None) -> List[Dict]:
-        """Получить отформатированную историю разговора для промпта"""
+        """Get formatted conversation history for prompt"""
         return self.items[:limit]
 
     def copy_without_system_memories(self):
-        """Вернуть копию памяти без системных воспоминаний"""
+        """Return a copy of the memory without system memories"""
         filtered_items = [m for m in self.items if m["type"] != "system"]
         memory = Memory()
         memory.items = filtered_items
@@ -253,7 +278,7 @@ class Memory:
 
 class Environment:
     def execute_action(self, action: Action, args: dict) -> dict:
-        """Выполнить действие и вернуть результат."""
+        """Execute an action and return the result."""
         try:
             result = action.execute(**args)
             return self.format_result(result)
@@ -265,7 +290,7 @@ class Environment:
             }
 
     def format_result(self, result: Any) -> dict:
-        """Форматировать результат с метаданными."""
+        """Format the result with metadata."""
         return {
             "tool_executed": True,
             "result": result,
@@ -282,11 +307,11 @@ class AgentLanguage:
                          environment: Environment,
                          goals: List[Goal],
                          memory: Memory) -> Prompt:
-        raise NotImplementedError("Подклассы должны реализовать этот метод")
+        raise NotImplementedError("Subclasses must implement this method")
 
 
     def parse_response(self, response: str) -> dict:
-        raise NotImplementedError("Подклассы должны реализовать этот метод")
+        raise NotImplementedError("Subclasses must implement this method")
 
 
 
@@ -305,7 +330,7 @@ class AgentFunctionCallingActionLanguage(AgentLanguage):
         ]
 
     def format_memory(self, memory: Memory) -> List:
-        """Генерировать ответ от языковой модели"""
+        """Generate response from language model"""
         # Map all environment results to a role:user messages
         # Map all assistant messages to a role:assistant messages
         # Map all user messages to a role:user messages
@@ -327,7 +352,7 @@ class AgentFunctionCallingActionLanguage(AgentLanguage):
         return mapped_items
 
     def format_actions(self, actions: List[Action]) -> [List,List]:
-        """Генерировать ответ от языковой модели"""
+        """Generate response from language model"""
 
         tools = [
             {
@@ -367,7 +392,7 @@ class AgentFunctionCallingActionLanguage(AgentLanguage):
         return prompt
 
     def parse_response(self, response: str) -> dict:
-        """Разобрать ответ LLM в структурированный формат, извлекая блок ```json"""
+        """Parse LLM response into structured format by extracting the ```json block"""
 
         try:
             return json.loads(response)
@@ -415,7 +440,7 @@ class PythonActionRegistry(ActionRegistry):
                 terminal=self.terminate_tool.get("terminal", False)
             ))
         else:
-            raise Exception("Инструмент завершения не найден в реестре инструментов")
+            raise Exception("Terminate tool not found in tool registry")
 
 
 
@@ -427,7 +452,7 @@ class Agent:
                  generate_response: Callable[[Prompt], str],
                  environment: Environment):
         """
-        Инициализировать агента с его основными компонентами GAME
+        Initialize an agent with its core GAME components
         """
         self.goals = goals
         self.generate_response = generate_response
@@ -436,7 +461,7 @@ class Agent:
         self.environment = environment
 
     def construct_prompt(self, goals: List[Goal], memory: Memory, actions: ActionRegistry) -> Prompt:
-        """Построить промпт с контекстом памяти"""
+        """Build prompt with memory context"""
         return self.agent_language.construct_prompt(
             actions=actions.get_actions(),
             environment=self.environment,
@@ -458,7 +483,7 @@ class Agent:
 
     def update_memory(self, memory: Memory, response: str, result: dict):
         """
-        Обновить память с решением агента и ответом окружения.
+        Update memory with the agent's decision and the environment's response.
         """
         new_memories = [
             {"type": "assistant", "content": response},
@@ -473,7 +498,7 @@ class Agent:
 
     def run(self, user_input: str, memory=None, max_iterations: int = 50) -> Memory:
         """
-        Выполнить цикл GAME для этого агента с максимальным лимитом итераций.
+        Execute the GAME loop for this agent with a maximum iteration limit.
         """
         memory = memory or Memory()
         self.set_current_task(memory, user_input)
@@ -482,17 +507,17 @@ class Agent:
             # Construct a prompt that includes the Goals, Actions, and the current Memory
             prompt = self.construct_prompt(self.goals, memory, self.actions)
 
-            print("Агент размышляет...")
+            print("Agent thinking...")
             # Generate a response from the agent
             response = self.prompt_llm_for_action(prompt)
-            print(f"Решение агента: {response}")
+            print(f"Agent Decision: {response}")
 
             # Determine which action the agent wants to execute
             action, invocation = self.get_action(response)
 
             # Execute the action in the environment
             result = self.environment.execute_action(action, invocation["args"])
-            print(f"Результат действия: {result}")
+            print(f"Action Result: {result}")
 
             # Update the agent's memory with information about what happened
             self.update_memory(memory, response, result)

@@ -39,7 +39,7 @@ Keep your responses concise and focused on these two goals."""
     try:
         # Call the LLM
         response = completion(
-            model="openrouter/qwen/qwen3-235b-a22b:free",
+            model="openrouter/google/gemini-2.0-flash-exp:free",
             messages=messages,
             max_tokens=1024
         )
@@ -75,5 +75,5 @@ if __name__ == "__main__":
     for item in result["memory"]:
         print(f"\n{item['type'].upper()}: {item['content']}")
     print("\n" + "=" * 50)
-    print(f"Status: {result['status']}")
+    #print(f"Status: {result['status']}")
 

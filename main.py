@@ -18,13 +18,14 @@ litellm.set_verbose=True
 
 
 # Configure litellm for OpenRouter function calling
-litellm.add_function_to_prompt = True
+# Note: add_function_to_prompt can cause issues with newer litellm versions
+# litellm.add_function_to_prompt = True
 
 app = FastAPI(title="AI Talk Travel Agent", description="A FastAPI application that forwards messages to neural networks using litellm")
 
 class MessageRequest(BaseModel):
     message: str
-    model: str = "openrouter/deepseek/deepseek-chat-v3.1:free"
+    model: str = "openrouter/google/gemini-2.0-flash-exp:free"
     max_tokens: int = 1024
 
 class MessageResponse(BaseModel):
@@ -39,7 +40,7 @@ class TravelAgentResponse(BaseModel):
     memory: list
     status: str
 
-def generate_ai_response(message: str, model: str = "openrouter/qwen/qwen3-235b-a22b:free", max_tokens: int = 1024) -> Dict[str, Any]:
+def generate_ai_response(message: str, model: str = "openrouter/google/gemini-2.0-flash-exp:free", max_tokens: int = 1024) -> Dict[str, Any]:
     """
     Generate response using litellm, following the pattern from the reference implementation
     """
@@ -104,8 +105,15 @@ async def travel_agent(request: TravelAgentRequest):
     Run the travel agent to interview user about trip purpose
     """
     try:
-        # Run the travel agent with the provided message
-        final_memory = run_travel_agent_with_input(request.message)
+        from travel_agent import process_user_response, agent_state
+        
+        # Check if this is a continuation of an existing conversation
+        if agent_state["current_goal"] > 1 or (agent_state["current_goal"] == 1 and agent_state.get("has_asked_goal_1", False)):
+            # Process user response and advance to next goal
+            final_memory = process_user_response(request.message)
+        else:
+            # Start new conversation
+            final_memory = run_travel_agent_with_input(request.message)
 
         # Convert memory to list format for JSON response
         memory_list = []
@@ -115,9 +123,15 @@ async def travel_agent(request: TravelAgentRequest):
                 "content": item["content"]
             })
 
+        # Determine status based on current goal
+        if agent_state["current_goal"] > 6:
+            status = "completed"
+        else:
+            status = "in_progress"
+
         return TravelAgentResponse(
             memory=memory_list,
-            status="completed"
+            status=status
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error running travel agent: {str(e)}")

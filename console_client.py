@@ -1,33 +1,31 @@
 #!/usr/bin/env python3
 """
 Console client for the AI Talk Travel Agent
-Provides a simple interface to send messages to the neural network
+Provides an interactive interface to connect to the advanced travel agent
 """
 
 import requests
 import json
 import sys
-from typing import Optional
+import time
+from typing import Optional, Dict, Any
 
 class AITalkClient:
     def __init__(self, base_url: str = "http://localhost:8001"):
         self.base_url = base_url
         self.session = requests.Session()
     
-    def send_message(self, message: str, model: str = "openrouter/qwen/qwen3-235b-a22b:free", max_tokens: int = 1024) -> Optional[dict]:
+    def send_message(self, message: str, model: str = "openrouter/google/gemini-2.0-flash-exp:free", max_tokens: int = 1024) -> Optional[dict]:
         """
         Send a message to the AI agent and get response
         """
         try:
             payload = {
-                "message": message,
-                "model": model,
-                "max_tokens": max_tokens
+                "message": message
             }
-            print("❌ 00---hi")
             
             response = self.session.post(
-                f"{self.base_url}/chat",
+                f"{self.base_url}/travel-agent",
                 json=payload,
                 headers={"Content-Type": "application/json"}
             )
@@ -89,7 +87,7 @@ def main():
     """
     Main console interface
     """
-    print("🤖 AI Talk Travel Agent - Console Interface")
+    print("🤖 Привет! Я консультант Кумар-Аравинд-Шива. Я могу проконсультировать Вас, по поводу вашей поездки. Я знаю очень многое по путеществиям. Я брахман, трахман, шаман в 105-м поколении. Я знаю почти все, либо все, что могу найти в интернете. Задавайте ваши вопроса!")
     print("=" * 50)
     
     # Initialize client
@@ -101,28 +99,28 @@ def main():
         print("   python main.py")
         sys.exit(1)
     
-    print("✅ Server is running and healthy!")
-    print("\nAvailable modes:")
-    print("1. Regular chat - just type your message")
-    print("2. Travel agent - type 'travel' to start trip purpose interview")
-    print("Type 'quit' or 'exit' to stop.")
+    #print("✅ Server is running and healthy!")
+    print("\nДоступные режимы:")
+    print("1. Обычный чат — просто напишите сообщение")
+    print("2. Турагент — введите «путешествие», чтобы начать собеседование о цели поездки.")
+    print("Чтобы остановить, введите «quit» или «exit».")
     print("-" * 50)
     
     while True:
         try:
             # Get user input
-            user_input = input("\n💬 You: ").strip()
+            user_input = input("\n💬 Вы: ").strip()
             
             # Check for exit commands
             if user_input.lower() in ['quit', 'exit', 'q']:
-                print("👋 Goodbye!")
+                print("👋 Пока!")
                 break
             
             if not user_input:
                 continue
             
             # Check for travel agent mode
-            if user_input.lower() == 'travel':
+            if user_input.lower() == 'Путешествие':
                 print("\n🌍 Starting Travel Agent - Trip Purpose Interview")
                 print("What is the purpose of your trip?")
                 trip_purpose = input("Trip purpose: ").strip()
@@ -139,21 +137,22 @@ def main():
                     for item in result.get('memory', []):
                         print(f"\n{item['type'].upper()}: {item['content']}")
                     print("\n" + "=" * 50)
-                    print(f"Status: {result.get('status', 'unknown')}")
+                    #print(f"Status: {result.get('status', 'unknown')}")
                 else:
                     print("❌ Failed to get response from Travel Agent")
                 continue
             
             # Regular chat mode
-            print("🤔 AI is thinking...")
+            print("🤔 Я думаю...")
             result = client.send_message(user_input)
             
             if result:
-                print(f"\n🤖 AI ({result.get('model_used', 'unknown')}):")
-                print(result.get('response', 'No response received'))
-                
-                if result.get('tokens_used'):
-                    print(f"\n📊 Tokens used: {result['tokens_used']}")
+                print(f"\n📝 Travel Agent Memory:")
+                print("=" * 50)
+                for item in result.get('memory', []):
+                    print(f"\n{item['type'].upper()}: {item['content']}")
+                print("\n" + "=" * 50)
+                #print(f"Status: {result.get('status', 'unknown')}")
             else:
                 print("❌ Failed to get response from AI")
                 
