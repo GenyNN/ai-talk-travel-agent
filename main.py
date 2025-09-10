@@ -105,7 +105,17 @@ async def travel_agent(request: TravelAgentRequest):
     Run the travel agent to interview user about trip purpose
     """
     try:
-        from travel_agent import process_user_response, agent_state
+        from travel_agent import process_user_response, agent_state, reset_agent_state
+        
+        # Check if this is a new conversation request (keywords that indicate starting fresh)
+        new_conversation_keywords = ["travel", "поездка", "путешествие", "тур", "начать", "новый", "снова"]
+        is_new_conversation = any(keyword in request.message.lower() for keyword in new_conversation_keywords)
+        
+        # Reset state if previous conversation was completed OR if this is a new conversation request
+        if (agent_state.get("goal_completed", False) or 
+            not agent_state.get("conversation_active", True) or 
+            is_new_conversation):
+            reset_agent_state()
         
         # Check if this is a continuation of an existing conversation
         if agent_state["current_goal"] > 1 or (agent_state["current_goal"] == 1 and agent_state.get("has_asked_goal_1", False)):
@@ -124,7 +134,7 @@ async def travel_agent(request: TravelAgentRequest):
             })
 
         # Determine status based on current goal
-        if agent_state["current_goal"] > 6:
+        if agent_state["current_goal"] > 8 or agent_state.get("goal_completed", False):
             status = "completed"
         else:
             status = "in_progress"

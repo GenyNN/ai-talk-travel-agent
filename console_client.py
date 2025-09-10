@@ -4,6 +4,7 @@ Console client for the AI Talk Travel Agent
 Provides an interactive interface to connect to the advanced travel agent
 """
 
+
 import requests
 import json
 import sys
