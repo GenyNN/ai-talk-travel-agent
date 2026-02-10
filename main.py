@@ -1,13 +1,14 @@
 import json
 import os
 from typing import Dict, Any
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 import litellm
 from litellm import completion
 from dotenv import load_dotenv
 from simple_travel_agent import run_simple_travel_agent
-from travel_agent import run_travel_agent_with_input
+from travel_agent import run_travel_agent_with_input, process_travel_request
+from telegram_bot import process_webhook_update, set_webhook, get_bot_info
 #import pydevd_pycharm
 
 # Load environment variables
@@ -39,6 +40,23 @@ class TravelAgentRequest(BaseModel):
 class TravelAgentResponse(BaseModel):
     memory: list
     status: str
+
+class TelegramWebhookRequest(BaseModel):
+    update_id: int
+    message: Dict[str, Any] = None
+    edited_message: Dict[str, Any] = None
+    channel_post: Dict[str, Any] = None
+    edited_channel_post: Dict[str, Any] = None
+    inline_query: Dict[str, Any] = None
+    chosen_inline_result: Dict[str, Any] = None
+    callback_query: Dict[str, Any] = None
+    shipping_query: Dict[str, Any] = None
+    pre_checkout_query: Dict[str, Any] = None
+    poll: Dict[str, Any] = None
+    poll_answer: Dict[str, Any] = None
+    my_chat_member: Dict[str, Any] = None
+    chat_member: Dict[str, Any] = None
+    chat_join_request: Dict[str, Any] = None
 
 def generate_ai_response(message: str, model: str = "openrouter/google/gemini-2.0-flash-exp:free", max_tokens: int = 1024) -> Dict[str, Any]:
     """
@@ -78,6 +96,9 @@ async def root():
         "endpoints": {
             "/chat": "POST - Send a message and get AI response",
             "/travel-agent": "POST - Run travel agent with trip purpose interview",
+            "/telegram/webhook": "POST - Telegram webhook endpoint",
+            "/telegram/set-webhook": "POST - Set Telegram webhook URL",
+            "/telegram/bot-info": "GET - Get Telegram bot information",
             "/health": "GET - Check API health"
         }
     }
@@ -105,46 +126,74 @@ async def travel_agent(request: TravelAgentRequest):
     Run the travel agent to interview user about trip purpose
     """
     try:
-        from travel_agent import process_user_response, agent_state, reset_agent_state
+        # Use the common function to process the travel request
+        result = process_travel_request(request.message)
         
-        # Check if this is a new conversation request (keywords that indicate starting fresh)
-        new_conversation_keywords = ["travel", "поездка", "путешествие", "тур", "начать", "новый", "снова"]
-        is_new_conversation = any(keyword in request.message.lower() for keyword in new_conversation_keywords)
-        
-        # Reset state if previous conversation was completed OR if this is a new conversation request
-        if (agent_state.get("goal_completed", False) or 
-            not agent_state.get("conversation_active", True) or 
-            is_new_conversation):
-            reset_agent_state()
-        
-        # Check if this is a continuation of an existing conversation
-        if agent_state["current_goal"] > 1 or (agent_state["current_goal"] == 1 and agent_state.get("has_asked_goal_1", False)):
-            # Process user response and advance to next goal
-            final_memory = process_user_response(request.message)
-        else:
-            # Start new conversation
-            final_memory = run_travel_agent_with_input(request.message)
-
-        # Convert memory to list format for JSON response
-        memory_list = []
-        for item in final_memory.get_memories():
-            memory_list.append({
-                "type": item["type"],
-                "content": item["content"]
-            })
-
-        # Determine status based on current goal
-        if agent_state["current_goal"] > 8 or agent_state.get("goal_completed", False):
-            status = "completed"
-        else:
-            status = "in_progress"
-
         return TravelAgentResponse(
-            memory=memory_list,
-            status=status
+            memory=result["memory"],
+            status=result["status"]
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error running travel agent: {str(e)}")
+
+@app.post("/telegram_webhook")
+async def telegram_webhook(request: Request):
+    """
+    Telegram webhook endpoint to receive updates from Telegram
+    """
+    try:
+        # Get the raw request body
+        body = await request.body()
+        update_data = json.loads(body)
+        
+        # Process the webhook update
+        success = process_webhook_update(update_data)
+        
+        if success:
+            return {"status": "ok"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to process webhook update")
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing webhook: {str(e)}")
+
+@app.post("/telegram/set-webhook")
+async def set_telegram_webhook(request: Request):
+    """
+    Set Telegram webhook URL
+    """
+    try:
+        body = await request.json()
+        webhook_url = body.get("webhook_url")
+        
+        if not webhook_url:
+            raise HTTPException(status_code=400, detail="webhook_url is required")
+        
+        success = set_webhook(webhook_url)
+        
+        if success:
+            return {"status": "ok", "webhook_url": webhook_url}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to set webhook")
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error setting webhook: {str(e)}")
+
+@app.get("/telegram/bot-info")
+async def get_telegram_bot_info():
+    """
+    Get Telegram bot information
+    """
+    try:
+        bot_info = get_bot_info()
+        
+        if bot_info:
+            return {"status": "ok", "bot_info": bot_info}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to get bot info")
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting bot info: {str(e)}")
 
 @app.get("/health")
 async def health_check():

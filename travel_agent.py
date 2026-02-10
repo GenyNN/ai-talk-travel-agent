@@ -173,7 +173,7 @@ def get_perplexity_recommendations(trip_type: str, destination: str, group_size:
     api_key = os.getenv("PERPLEXITY_API_KEY")
     if not api_key:
         # Fallback to hardcoded key for testing (remove in production)
-        api_key = ""
+        api_key = "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"
         if not api_key:
             # Debug information
             all_env_vars = {k: v for k, v in os.environ.items() if 'PERPLEXITY' in k or 'API' in k}
@@ -292,9 +292,9 @@ def generate_travel_summary() -> str:
     departure_city = responses.get("departure_city", "Not specified")
     summary += f"• Город отправления: {departure_city}\n"
     
-    summary += "\n" + "="*60 + "\n"
+    summary += "\n" + "="*62 + "\n"
     summary += "🔍 ИЩЕМ, ДУМАЕМ, ЛОВИМ СЛОТЫ...\n"
-    summary += "="*60 + "\n\n"
+    summary += "="*62 + "\n\n"
     
     # Get Perplexity recommendations
     try:
@@ -306,7 +306,7 @@ def generate_travel_summary() -> str:
         summary += f"❌ Ошибка при получении рекомендаций: {str(e)}\n"
         summary += "Пожалуйста, попробуйте позже или обратитесь в службу поддержки.\n"
     
-    summary += "\n" + "="*60 + "\n"
+    summary += "\n" + "="*62 + "\n"
     summary += "Желаю вам счастливого пути! 🎉"
     
     return summary
@@ -653,11 +653,70 @@ def process_user_response(user_response: str):
     # Return the next question or summary
     return run_travel_agent_with_input("continue")
 
+def process_travel_request(message: str, user_id: str = None) -> Dict[str, Any]:
+    """
+    Common function to process travel requests for both API and Telegram.
+    
+    Args:
+        message: User's message/input
+        user_id: Optional user ID for session management (for Telegram)
+        
+    Returns:
+        Dictionary with response data including memory and status
+    """
+    try:
+        # Check if this is a new conversation request (keywords that indicate starting fresh)
+        new_conversation_keywords = ["travel", "поездка", "путешествие", "тур", "начать", "новый", "снова", "привет"]
+        is_new_conversation = any(keyword in message.lower() for keyword in new_conversation_keywords)
+        
+        # Reset state if previous conversation was completed OR if this is a new conversation request
+        if (agent_state.get("goal_completed", False) or 
+            not agent_state.get("conversation_active", True) or 
+            is_new_conversation):
+            reset_agent_state()
+        
+        # Check if this is a continuation of an existing conversation
+        if agent_state["current_goal"] > 1 or (agent_state["current_goal"] == 1 and agent_state.get("has_asked_goal_1", False)):
+            # Process user response and advance to next goal
+            final_memory = process_user_response(message)
+        else:
+            # Start new conversation
+            final_memory = run_travel_agent_with_input(message)
+
+        # Convert memory to list format for JSON response
+        memory_list = []
+        for item in final_memory.get_memories():
+            memory_list.append({
+                "type": item["type"],
+                "content": item["content"]
+            })
+
+        # Determine status based on current goal
+        if agent_state["current_goal"] > 8 or agent_state.get("goal_completed", False):
+            status = "completed"
+        else:
+            status = "in_progress"
+        
+        return {
+            "memory": memory_list,
+            "status": status,
+            "current_goal": agent_state["current_goal"],
+            "conversation_active": agent_state.get("conversation_active", True)
+        }
+        
+    except Exception as e:
+        return {
+            "memory": [{"type": "error", "content": f"Error processing request: {str(e)}"}],
+            "status": "error",
+            "current_goal": agent_state.get("current_goal", 1),
+            "conversation_active": False
+        }
+
 def run_travel_agent():
     """Run the travel agent and display the final memory (standalone version)"""
     
     print("🌍 Advanced Travel Agent - Comprehensive Travel Planning")
-    print("=" * 60)
+    print("=" * 62)
     print("Welcome! I'm here to help you plan your perfect trip.")
     print("I'll ask you a series of questions to understand your travel preferences.\n")
     
@@ -673,14 +732,14 @@ def run_travel_agent():
     final_memory = run_travel_agent_with_input(user_input)
     
     # Display the final memory
-    print("\n" + "=" * 60)
+    print("\n" + "=" * 62)
     print("📝 AGENT MEMORY:")
-    print("=" * 60)
+    print("=" * 62)
     
     for item in final_memory.get_memories():
         print(f"\n{item['type'].upper()}: {item['content']}")
     
-    print("\n" + "=" * 60)
+    print("\n" + "=" * 62)
     print("✅ Agent session completed!")
 
 if __name__ == "__main__":
