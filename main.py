@@ -8,9 +8,16 @@ from litellm import completion
 from dotenv import load_dotenv
 from simple_travel_agent import run_simple_travel_agent
 from travel_agent import run_travel_agent_with_input, process_travel_request
-from telegram_bot import process_webhook_update, set_webhook, get_bot_info
+from telegram_bot import process_webhook_update, set_webhook, get_bot_info, process_travel_agent_message
 #import pydevd_pycharm
 
+from vkbottle.bot import Bot, Message
+from vkbottle import Keyboard, Text
+
+# Твой класс агента (мозг)
+# from core.agent import TravelAgent
+botVK = Bot(token="vk1.a.EKYcKAxn3YQxHvuaZwvOuY0ozVH4GfayHWHoXU8fTWwH8KfhWJM5uDgeNh8Tac7-KE093_fzx0FskHhTG4pZBZkjZW7yO9h5zaOUaxkznrF6GWdImxrig3QfrFRoUqOr-vbO5x8uTB7GOf0bnFqOSjtIz0No10lgSQG8GYUunCCVppk4j-nCF9nuhE1koMbVLICxTh7Iss4XfNq3f94QaA")
+#vk1.a.x2Ed_mY7KwADHWXkb14n8mxG1etIBZ2wD8ikQ85B2LIgaqeuMjohPLhm44hXGwtwbkOsVvQ8s1OagA58mZ0thNmvKltUdkl2CjmJRamhswkwQ4twu4VXDk1rOCL3gE505em9ahjcNJzYYoNDLCOFklfsjydWyZS9x1fnZsrb2Dj24odoKdwstWkMAKGN5Vt35MMPkxCChqEEEeTFezOWOg
 # Load environment variables
 #pydevd_pycharm.settrace('localhost', port=12388, stdoutToServer=True, stderrToServer=True)
 load_dotenv()
@@ -200,6 +207,92 @@ async def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "service": "ai-talk-travel-agent"}
 
+
+@botVK.on.message()
+async def travel_handler(message: Message):
+    user_id = f"vk_{message.from_id}"  # Добавляем префикс платформы
+    user_text = message.text
+
+    # Передаем строку с префиксом, чтобы сессии не пересекались
+    response = process_travel_agent_message(user_id, user_text)
+    await message.answer(response)
+
+    # # Пример простого ответа:
+    # if "привет" in user_text.lower():
+    #     await message.answer(
+    #         "Здравствуйте! Я ваш ИИ-помощник по путешествиям. "
+    #         "Чтобы я подобрал лучший тур, скажите, когда вы планируете отпуск?"
+    #     )
+    # else:
+    #     # Логика твоего агента
+    #     # response = agent.get_answer(user_id, user_text)
+    #     await message.answer("Интересный выбор! Записываю в блокнот...")
+
+
+# --- ЗАПУСК (ИСПРАВЛЕННЫЙ) ---
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    import asyncio
+
+
+    async def run_vk_polling(bot):
+        """
+        Исправленный ручной запуск.
+        Разворачивает пачки обновлений (updates) от ВК.
+        """
+        print("🤖 Обработчики VK запущены...")
+
+        for hook in bot.loop_wrapper.on_startup:
+            await hook()
+
+        try:
+            async for raw_response in bot.polling.listen():
+                # ВК присылает либо одно событие, либо словарь с ключом 'updates'
+                updates = []
+                if isinstance(raw_response, dict):
+                    if "updates" in raw_response:
+                        updates = raw_response["updates"]
+                    elif "type" in raw_response:
+                        updates = [raw_response]
+
+                for event in updates:
+                    # Теперь проверяем каждое конкретное событие внутри пачки
+                    if not isinstance(event, dict) or "type" not in event:
+                        continue
+
+                    print(f"✅ Обработка события: {event['type']}")
+
+                    for view in bot.router.views.values():
+                        try:
+                            if await view.process_event(event):
+                                await view.handle_event(event, bot.api, bot.state_dispenser)
+                        except Exception as e:
+                            print(f"⚠️ Ошибка во вьюхе {view.__class__.__name__}: {e}")
+
+        except Exception as e:
+            print(f"🛑 Критическая ошибка поллинга VK: {e}")
+        finally:
+            for hook in bot.loop_wrapper.on_shutdown:
+                await hook()
+
+
+    async def main():
+        # Настройка сервера FastAPI
+        config = uvicorn.Config(app, host="0.0.0.0", port=8082)
+        server = uvicorn.Server(config)
+
+        print("🚀 СИСТЕМА ЗАПУСКАЕТСЯ: API + VK BOT")
+
+        # Запускаем две задачи параллельно:
+        # 1. Сервер API (FastAPI)
+        # 2. Наш ручной поллинг бота
+        await asyncio.gather(
+            server.serve(),
+            run_vk_polling(botVK)
+        )
+
+
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n👋 Система остановлена пользователем")

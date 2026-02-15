@@ -563,7 +563,11 @@ def run_travel_agent_with_input(user_input: str):
     elif current_goal == 5:
         response = ask_departure_city()
     elif current_goal == 6:
-        response = generate_travel_summary()
+        if not agent_state["user_responses"].get("travel_dates"):
+            agent_state["current_goal"] = 4
+            response = ask_travel_dates()
+        else:
+            response = generate_travel_summary()
     elif current_goal == 7:
         response = ask_user_feedback()
     elif current_goal == 8:
