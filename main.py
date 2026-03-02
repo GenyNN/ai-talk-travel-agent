@@ -16,8 +16,7 @@ from vkbottle import Keyboard, Text
 
 # Твой класс агента (мозг)
 # from core.agent import TravelAgent
-botVK = Bot(token="vk1.a.EKYcKAxn3YQxHvuaZwvOuY0ozVH4GfayHWHoXU8fTWwH8KfhWJM5uDgeNh8Tac7-KE093_fzx0FskHhTG4pZBZkjZW7yO9h5zaOUaxkznrF6GWdImxrig3QfrFRoUqOr-vbO5x8uTB7GOf0bnFqOSjtIz0No10lgSQG8GYUunCCVppk4j-nCF9nuhE1koMbVLICxTh7Iss4XfNq3f94QaA")
-#vk1.a.x2Ed_mY7KwADHWXkb14n8mxG1etIBZ2wD8ikQ85B2LIgaqeuMjohPLhm44hXGwtwbkOsVvQ8s1OagA58mZ0thNmvKltUdkl2CjmJRamhswkwQ4twu4VXDk1rOCL3gE505em9ahjcNJzYYoNDLCOFklfsjydWyZS9x1fnZsrb2Dj24odoKdwstWkMAKGN5Vt35MMPkxCChqEEEeTFezOWOg
+botVK = Bot(token=os.environ.get("VK_POOL_KEY"))
 # Load environment variables
 #pydevd_pycharm.settrace('localhost', port=12388, stdoutToServer=True, stderrToServer=True)
 load_dotenv()
@@ -278,7 +277,7 @@ if __name__ == "__main__":
 
     async def main():
         # Настройка сервера FastAPI
-        config = uvicorn.Config(app, host="0.0.0.0", port=8082)
+        config = uvicorn.Config(app, host="0.0.0.0", port=8081)
         server = uvicorn.Server(config)
 
         print("🚀 СИСТЕМА ЗАПУСКАЕТСЯ: API + VK BOT")
