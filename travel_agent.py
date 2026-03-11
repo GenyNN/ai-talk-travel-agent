@@ -7,6 +7,7 @@ and includes error handling for invalid responses.
 
 import importlib
 import os
+import json
 from typing import List, Dict, Any
 from dotenv import load_dotenv
 
@@ -26,6 +27,7 @@ litellm.set_verbose=True
 # litellm.add_function_to_prompt = True
 
 # Global state to track current goal and user responses
+#
 agent_state = {
     "current_goal": 1,
     "user_responses": {},
@@ -33,7 +35,9 @@ agent_state = {
     "max_errors": 3,
     "goal_completed": False,
     "conversation_active": True,
-    "has_asked_goal_1": False
+    "has_asked_goal_1": False,
+    "dynamic_questions_count": 0,
+    "dynamic_completed": False
 }
 
 def reset_agent_state():
@@ -50,7 +54,9 @@ def reset_agent_state():
         "max_errors": 3,
         "goal_completed": False,
         "conversation_active": True,
-        "has_asked_goal_1": False
+        "has_asked_goal_1": False,
+        "dynamic_questions_count": 0,
+        "dynamic_completed": False
     })
 
 # Define the main goal for the travel agent - sequential execution
@@ -58,115 +64,95 @@ goals = [
     Goal(
         priority=1,
         name="Sequential Travel Planning",
-        description="Execute travel planning goals sequentially: 1) Ask trip type, 2) Ask destination, 3) Ask group size, 4) Ask travel dates, 5) Ask departure city, 6) Generate summary with Perplexity, 7) Collect user feedback, 8) Offer human agent connection. Handle errors gracefully."
+        description=(
+            "Execute travel planning goals sequentially: "
+            "1) Capture travel dates, 2) Ask group size, 3) Ask if children will travel, "
+            "4) Ask children age (if applicable), 5) Ask destination preferences, "
+            "6) Ask budget, 7) Ask departure city, 8) Run dynamic Perplexity clarification loop, "
+            "9) Ask final catch-all question, 10) Terminate conversation. Handle errors gracefully."
+        )
     )
 ]
 
-# Define the tools using decorators
 @register_tool(tags=["sequential", "main"])
 def execute_sequential_travel_planning() -> str:
-    """Execute the travel planning process sequentially through all goals.
-    
-    This function manages the sequential execution of travel planning goals:
-    1. Ask trip type
-    2. Ask destination  
-    3. Ask group size
-    4. Ask travel dates
-    5. Ask departure city
-    6. Generate summary with Perplexity
-    7. Collect user feedback
-    8. Offer human agent connection
-    
-    Returns:
-        The appropriate question or response based on current goal
-    """
+    """Execute the travel planning process sequentially through all goals."""
     current_goal = agent_state["current_goal"]
-    
-    if current_goal == 1:
-        return ask_trip_type()
-    elif current_goal == 2:
-        return ask_destination()
-    elif current_goal == 3:
+    if current_goal == 2:
         return ask_group_size()
+    elif current_goal == 3:
+        return ask_children_exist()
     elif current_goal == 4:
-        return ask_travel_dates()
+        return ask_children_age()
     elif current_goal == 5:
-        return ask_departure_city()
+        return ask_destination_preferences()
     elif current_goal == 6:
-        return generate_travel_summary()
+        return ask_budget()
     elif current_goal == 7:
-        return ask_user_feedback()
-    elif current_goal == 8:
-        return offer_human_agent_connection()
+        return ask_departure_city()
+    elif current_goal == 9:
+        return ask_final_catch_all()
+    elif current_goal == 10:
+        return terminate("Отлично! Все ваши вводные учтем максимально. Эксперт подготовит для вас подборку туров, и свяжется с вами")
     else:
         return "Travel planning session completed. Thank you!"
 
-@register_tool(tags=["interview", "goal_1"])
-def ask_trip_type() -> str:
-    """Ask the user about the type of trip they are planning.
-    
-    Returns:
-        A message asking about trip type with three options
-    """
-    return """Какую поездку вы планируете?
-
-Выберите один из следующих вариантов:
-1) Самостоятельная поездка — вы всё организуете сами
-2) Организованный туризм — воспользуйтесь услугами туроператора (рекомендуется)
-3) Деловая поездка
-
-Укажите номер (1, 2 или 3) или полное название варианта."""
 
 @register_tool(tags=["interview", "goal_2"])
-def ask_destination() -> str:
-    """Ask the user about their travel destination.
-    
-    Returns:
-        A message asking about destination
-    """
-    return "Какую страну, город или курорт вы хотели бы посетить? Укажите конкретное место назначения."
+def ask_group_size() -> str:
+    """Ask who will travel and how many adults."""
+    return "Хорошо. Кто поедет? Сколько взрослых?"
+
 
 @register_tool(tags=["interview", "goal_3"])
-def ask_group_size() -> str:
-    """Ask the user about the number of people traveling.
-    
-    Returns:
-        A message asking about group size
-    """
-    return "Сколько человек планирует отправиться в эту поездку? Укажите, пожалуйста, количество путешественников."
+def ask_children_exist() -> str:
+    """Ask if children will travel."""
+    return "Поедут ли дети? (Да/Нет)"
+
 
 @register_tool(tags=["interview", "goal_4"])
-def ask_travel_dates() -> str:
-    """Ask the user about their travel dates.
-    
-    Returns:
-        A message asking about travel dates
-    """
-    return "На какие приблизительные даты вы планируете поездку? Укажите конкретные даты или диапазон дат."
+def ask_children_age() -> str:
+    """Ask about children's ages."""
+    return "Уточните возраст детей?"
+
 
 @register_tool(tags=["interview", "goal_5"])
-def ask_departure_city() -> str:
-    """Ask the user about their departure city.
-    
-    Returns:
-        A message asking about departure city
-    """
-    return "Из какого города или ближайшего крупного города вы планируете начать путешествие? Укажите, пожалуйста, город отправления."
+def ask_destination_preferences() -> str:
+    """Ask about destination preferences."""
+    return "Есть ли пожелания по направлению/стране/городу назначения?"
 
-def get_perplexity_recommendations(trip_type: str, destination: str, group_size: str, travel_dates: str, departure_city: str, history_dialogue: str = "") -> str:
-    """Get travel recommendations from Perplexity API.
-    
-    Args:
-        trip_type: Type of trip (organized/independent/business)
-        destination: Travel destination
-        group_size: Number of travelers
-        travel_dates: Travel dates
-        departure_city: Departure city
-        history_dialogue: History of clarifying questions and answers
-        
-    Returns:
-        Formatted recommendations from Perplexity
-    """
+
+@register_tool(tags=["interview", "goal_6"])
+def ask_budget() -> str:
+    """Ask about desired budget."""
+    return "Хорошо. В какой общий бюджет хотели бы уложиться?"
+
+
+@register_tool(tags=["interview", "goal_7"])
+def ask_departure_city() -> str:
+    """Ask about departure city."""
+    return "Откуда планируете стартовать?"
+
+
+@register_tool(tags=["interview", "goal_9"])
+def ask_final_catch_all() -> str:
+    """Ask final catch-all question before termination."""
+    return (
+        "Спасибо за Ваши ответы. Подскажите, какие еще моменты важно учесть "
+        "при составлении подборки туров, которые ранее не обсудили?"
+    )
+
+def get_perplexity_recommendations(
+    trip_type: str,
+    destination: str,
+    group_size: str,
+    travel_dates: str,
+    departure_city: str,
+    budget: str,
+    children_info: str,
+    history_dialogue: str = "",
+) -> str:
+    """Get dynamic clarification question and short answer from Perplexity API."""
     import requests
     import os
     
@@ -181,27 +167,28 @@ def get_perplexity_recommendations(trip_type: str, destination: str, group_size:
             debug_info = f"Доступные переменные окружения: {list(all_env_vars.keys())}"
             return f"❌ API ключ не найден. Пожалуйста, проверьте настройки.\n{debug_info}"
     
-    # Construct the prompt according to requirements
+    # Construct the prompt according to new requirements
     prompt = f"""
-    Ты опытный турагент. Проанализируй переписку и дай краткий максимально человечный ответ и в конце Задавай ТОЛЬКО ОДИН вопрос для следующей диалога. Вопрос должен идти в самом конце ответа и самом последнем абзаце.
-Вопрос в конце должен раскрывать потребность человека и при этом чтобы каждый следующий вопрос приближал его к переадресации на живого турагента и тем самым покупке тура у агента.
+    Ты опытный турагент. Проанализируй переписку и дай краткий максимально человечный ответ не более 11-12 слов и в конце Задавай ТОЛЬКО ОДИН вопрос для следующего диалога. Вопрос должен идти в самом конце ответа и самом последнем абзаце.
+Вопрос в конце должен раскрывать потребность человека и при этом чтобы каждый следующий вопрос не повторял предыдущие, проверял на адекватность, квалифицировал как лида и двигал по маркетинговой воронке к покупке тура у агента.
 
 ПРАВИЛА:
 1. НИКОГДА не называй цены, отели, рейсы.
-2. НИКОГДА не давай конкретных рекомендаций, не навязывай свое мнение, но при этом твои советы должны раскрывать  место куда человек хочет поехать. Возможно чтобы человек посмотрел на это место с другой стороны. Возможно если что то в этом предложенном варианте плохо, то предложить другой вариант места в этой стране или даже другую страну. 
+2. НИКОГДА не давай конкретных рекомендаций, не навязывай свое мнение, но при этом твои советы должны раскрывать потребность туриста. 
 3. Задавай ВОПРОСЫ для уточнения потребностей.
-4. Если просят конкретику — предлагай созвон с живым турагентом.
-5. Говори как живой человек, естественно
+4. Если просят конкретику — вежливо поясни, что нужно больше данных для составления индивидуальной подборки и ненавязчиво предлагай созвон или встречу в офисе с живым турагентом.
+5. Говори как живой человек, естественно.
 
-Запрос для Perplexity следующим критериям:
-
+Используй следующие критерии:
 Критерий 1 - Тип поездки: {trip_type}
 Критерий 2 — Пункт назначения: {destination}
 Критерий 3 - Количество человек: {group_size}
 Критерий 4 — Даты поездки: {travel_dates}
 Критерий 5 - Город отправления: {departure_city}
-Критерий 6 - История уточняющих вопросов и ответов: {history_dialogue}
-    """
+Критерий 6 - Бюджет: {budget}
+Критерий 7 - Наличие и возраст детей: {children_info}
+Критерий 8 - История уточняющих вопросов и ответов: {history_dialogue}
+"""
 
     try:
         # Make request to Perplexity API using the cheapest model
@@ -233,12 +220,7 @@ def get_perplexity_recommendations(trip_type: str, destination: str, group_size:
             result = response.json()
             content = result["choices"][0]["message"]["content"]
             
-            # Format the response nicely
-            formatted_response = "\n\n" #"🎯 РЕКОМЕНДАЦИИ ОТ ПРОФЕССИОНАЛЬНОГО ТУРАГЕНТА:\n\n"
-            formatted_response += content
-            #formatted_response += "\n\n📋 Источник: Perplexity AI с веб-поиском"
-            
-            return formatted_response
+            return content
         else:
             return f"❌ Ошибка API: {response.status_code} - {response.text}"
             
@@ -249,172 +231,87 @@ def get_perplexity_recommendations(trip_type: str, destination: str, group_size:
     except Exception as e:
         return f"❌ Неожиданная ошибка: {str(e)}"
 
-@register_tool(tags=["summary", "goal_6"])
-def generate_travel_summary() -> str:
-    """Generate a comprehensive travel summary with Perplexity recommendations.
+@register_tool(tags=["error_handling", "goal_9"])
+def handle_user_error() -> str:
+    """Handle user errors or invalid responses.
     
     Returns:
-        A formatted summary with travel recommendations from Perplexity
+        A polite message asking for clarification
     """
-    responses = agent_state["user_responses"]
+    current_goal = agent_state["current_goal"]
+    error_count = agent_state["error_count"]
     
-    # Basic summary
-    summary = "\n\n"
-    #--summary = "Уважаемый турист, вы ввели следующую информацию:\n\n"
-
-
-    # Add trip type information
-    trip_type = responses.get("trip_type", "Not specified")
-    trip_type_display = ""
-    if trip_type == "2" or "organized" in trip_type.lower():
-        trip_type_display = "Организованный туризм с использованием услуг туроператора"
-        #--summary += "• Вы выбрали: Организованный туризм с использованием услуг туроператора\n"
-    elif trip_type == "1" or "independent" in trip_type.lower():
-        trip_type_display = "Самостоятельная поездка"
-        #--summary += "• Вы выбрали: Самостоятельная поездка\n"
-    elif trip_type == "3" or "business" in trip_type.lower():
-        trip_type_display = "Командировка"
-        #--summary += "• Вы выбрали: Командировка\n"
-    else:
-        trip_type_display = trip_type
-        #--summary += f"• Тип поездки: {trip_type}\n"
-
-
-    # Add destination information
-    destination = responses.get("destination", "Not specified")
-    #--summary += f"• Место назначения: {destination}\n"
-
-    # Add group size information
-    group_size = responses.get("group_size", "Not specified")
-    #--ummary += f"• Количество человек: {group_size}\n"
-
-    # Add travel dates information
-    travel_dates = responses.get("travel_dates", "Not specified")
-    #--summary += f"• Даты поездки: {travel_dates}\n"
-
-    # Add departure city information
-    departure_city = responses.get("departure_city", "Not specified")
-    #--summary += f"• Город отправления: {departure_city}\n"
-
-
+    if error_count >= agent_state["max_errors"]:
+        return "I apologize, but I'm having trouble understanding your responses. Please try again later or contact our support team for assistance. Thank you for your time!"
     
-    #summary += "\n" + "="*62 + "\n"
-    #summary += "🔍 ИЩЕМ, ДУМАЕМ, ЛОВИМ СЛОТЫ...\n"
-    #summary += "="*62 + "\n\n"
+    goal_messages = {
+        1: "travel dates",
+        2: "group size (number of adults)",
+        3: "whether children will travel",
+        4: "children's ages",
+        5: "destination preferences",
+        6: "budget",
+        7: "departure city",
+        8: "clarifying question",
+        9: "any additional important details",
+    }
     
-    # Собираем все записи из dialogue_history в одну строку через перенос строки
-    dialogue_history = agent_state["user_responses"].get("dialogue_history", [])
-    history_dialogue = "\n".join(dialogue_history) if dialogue_history else ""
+    current_question = goal_messages.get(current_goal, "the current question")
     
-    # Get Perplexity recommendations
+    return f"""I apologize, but I didn't understand your response clearly. 
+
+Could you please answer the question about {current_question}? 
+
+If you're unsure or embarrassed to answer, please let me know when would be a good time to ask you again about this.
+
+Please provide a clear answer so we can continue with your travel planning."""
+
+
+def validate_user_input(question_asked: str, user_answer: str) -> dict:
+    """Validate user input with a fast LLM before accepting it.
+    
+    Returns a dict with keys: is_valid (bool), reason (str).
+    """
+    system_prompt = (
+        "Ты строгий, но вежливый ассистент. Твоя задача — проверить, отвечает ли "
+        "реплика пользователя на заданный вопрос. Если ответ адекватный (даже если короткий) — "
+        'верни JSON {"is_valid": true, "reason": ""}. Если пользователь пишет явный бред, '
+        "оскорбления или текст не по теме — верни JSON "
+        '{"is_valid": false, "reason": "Вежливая просьба ответить на вопрос: [текст вопроса]"}."'
+    )
+    
     try:
-        perplexity_response = get_perplexity_recommendations(
-            trip_type_display, destination, group_size, travel_dates, departure_city, history_dialogue
-        )
-        summary += perplexity_response
-    except Exception as e:
-        summary += f"❌ Ошибка при получении рекомендаций: {str(e)}\n"
-        summary += "Пожалуйста, попробуйте позже или обратитесь в службу поддержки.\n"
-    
-    #summary += "\n" + "="*62 + "\n"
-    return summary
-
-def analyze_feedback_sentiment(user_feedback: str) -> str:
-    """Analyze user feedback to determine if it's positive or negative.
-    
-    Args:
-        user_feedback: User's feedback text
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": (
+                    f"Вопрос: {question_asked}\n"
+                    f"Ответ пользователя: {user_answer}\n"
+                    "Верни только JSON без пояснений."
+                ),
+            },
+        ]
         
-    Returns:
-        'positive', 'negative', or 'neutral'
-    """
-    feedback_lower = user_feedback.lower()
+        response = litellm.completion(
+            model="gemini-2.0-flash-exp:free",
+            messages=messages,
+            max_tokens=128,
+            temperature=0.0,
+        )
+        content = response["choices"][0]["message"]["content"]
+        
+        # Попробуем вытащить JSON даже если вокруг есть лишний текст/форматирование
+        start = content.find("{")
+        end = content.rfind("}")
+        if start != -1 and end != -1:
+            json_str = content[start : end + 1]
+            return json.loads(json_str)
+    except Exception:
+        # При ошибке валидатор не блокирует пользователя
+        pass
     
-    # Positive sentiment indicators
-    positive_words = [
-        "хорошо", "здорово", "супер", "круто", "нравится", "отлично", 
-        "прекрасно", "замечательно", "великолепно", "потрясающе", 
-        "спасибо", "благодарю", "понравилось", "подходит", "устраивает",
-        "да", "согласен", "принимаю", "беру"
-    ]
-    
-    # Negative sentiment indicators
-    negative_words = [
-        "не очень", "не нравится", "говно", "лажа", "плохо", "ужасно",
-        "не подходит", "не устраивает", "не то", "неправильно", 
-        "неверно", "неточно", "неактуально", "не подходит", "не подходит",
-        "не", "нет", "отказываюсь", "не хочу", "не буду"
-    ]
-    
-    # Check for positive sentiment
-    positive_count = sum(1 for word in positive_words if word in feedback_lower)
-    
-    # Check for negative sentiment
-    negative_count = sum(1 for word in negative_words if word in feedback_lower)
-    
-    if positive_count > negative_count:
-        return "positive"
-    elif negative_count > positive_count:
-        return "negative"
-    else:
-        return "neutral"
-
-@register_tool(tags=["feedback", "goal_7"])
-def ask_user_feedback() -> str:
-    """Ask the user for feedback on the travel recommendations from goal #6.
-    
-    Returns:
-        A message asking for user feedback on the recommendations
-    """
-    return """Спасибо за предоставленную информацию! 
-
-Мы подготовим для вас подробные рекомендации по путешествию на основе ваших предпочтений.
-
-Пожалуйста, оцените, насколько вам понравились предложенные рекомендации:
-
-• Если вам понравилось - напишите что-то вроде "хорошо", "здорово", "супер", "круто", "нравится"
-• Если что-то не понравилось - напишите "не очень", "не нравится" или укажите конкретные проблемы
-
-Ваша обратная связь поможет нам улучшить сервис!"""
-
-@register_tool(tags=["feedback_analysis", "goal_7_negative"])
-def analyze_negative_feedback() -> str:
-    """Analyze negative feedback and ask for specific issues.
-    
-    Returns:
-        A message asking for specific feedback about what didn't work
-    """
-    return """Понимаю, что рекомендации не полностью соответствуют вашим ожиданиям.
-
-Помогите нам улучшить сервис! Расскажите подробнее:
-
-• Что именно вам не понравилось в рекомендациях?
-• Какая информация была неточной или неактуальной?
-• Что бы вы хотели изменить или добавить?
-• Есть ли конкретные требования, которые мы не учли?
-
-Ваши комментарии помогут нам сделать сервис лучше для будущих пользователей."""
-
-@register_tool(tags=["connection", "goal_8"])
-def offer_human_agent_connection() -> str:
-    """Offer connection with a human travel agent for further assistance.
-    
-    Returns:
-        A message offering to connect with a human travel agent
-    """
-    return """Отлично! Рад, что рекомендации вам понравились! 🎉
-
-Если у вас есть дополнительные вопросы или вы хотите получить более персонализированную помощь, я могу связать вас с нашим живым турагентом.
-
-Наш специалист поможет вам:
-• Уточнить детали поездки
-• Забронировать отели и билеты
-• Ответить на любые вопросы о путешествии
-• Предоставить персональные рекомендации
-
-Хотите ли вы связаться с нашим турагентом? Напишите "да" или "нет".
-
-Спасибо за использование нашего сервиса! ✈️"""
+    return {"is_valid": True, "reason": ""}
 
 @register_tool(tags=["error_handling", "goal_9"])
 def handle_user_error() -> str:
@@ -457,7 +354,7 @@ def terminate(message: str = "Thank you for using our travel planning service!")
     Returns:
         The message with a termination note appended
     """
-    return f"{message}\nTerminating..."
+    return f"{message}\nДо связи..."
 
 # Custom environment to handle state management
 class TravelAgentEnvironment(Environment):
@@ -526,7 +423,12 @@ def create_travel_agent():
         "current_goal": 1,
         "user_responses": {},
         "error_count": 0,
-        "max_errors": 3
+        "max_errors": 3,
+        "goal_completed": False,
+        "conversation_active": True,
+        "has_asked_goal_1": False,
+        "dynamic_questions_count": 0,
+        "dynamic_completed": False,
     }
     
     # Define the agent language and environment
@@ -555,140 +457,206 @@ def run_travel_agent_with_input(user_input: str):
     # Add the initial user input
     memory.add_memory({"type": "user", "content": user_input})
     
-    # Execute the sequential travel planning based on current goal
     current_goal = agent_state["current_goal"]
     
-    if current_goal == 1:
-        response = ask_trip_type()
-        # Mark that we've asked the first goal question so the next input is treated as an answer
-        agent_state["has_asked_goal_1"] = True
-    elif current_goal == 2:
-        response = ask_destination()
-    elif current_goal == 3:
+    # Generate next question or response based on current goal
+    if current_goal == 2:
         response = ask_group_size()
+    elif current_goal == 3:
+        response = ask_children_exist()
     elif current_goal == 4:
-        response = ask_travel_dates()
+        response = ask_children_age()
     elif current_goal == 5:
-        response = ask_departure_city()
+        response = ask_destination_preferences()
     elif current_goal == 6:
-        if not agent_state["user_responses"].get("travel_dates"):
-            agent_state["current_goal"] = 4
-            response = ask_travel_dates()
-        else:
-            response = generate_travel_summary()
-            # Сохраняем последний ответ агента для использования в уточняющем цикле
-            agent_state["last_agent_response"] = response
+        response = ask_budget()
     elif current_goal == 7:
-        response = ask_user_feedback()
+        response = ask_departure_city()
     elif current_goal == 8:
-        response = offer_human_agent_connection()
+        # Первая итерация динамического цикла Perplexity
+        responses = agent_state["user_responses"]
+        trip_type = responses.get("trip_type", "Организованный туризм через турфирму")
+        destination = responses.get("destination", "")
+        group_size = responses.get("group_size", "")
+        travel_dates = responses.get("travel_dates", "")
+        departure_city = responses.get("departure_city", "")
+        budget = responses.get("budget", "")
+        children_info = responses.get("children_info", "")
+        dialogue_history = responses.get("dialogue_history", [])
+        history_dialogue = "\n".join(dialogue_history) if dialogue_history else ""
+        
+        response = get_perplexity_recommendations(
+            trip_type,
+            destination,
+            group_size,
+            travel_dates,
+            departure_city,
+            budget,
+            children_info,
+            history_dialogue,
+        )
+        agent_state["last_agent_response"] = response
+        agent_state["dynamic_questions_count"] = agent_state.get("dynamic_questions_count", 0) + 1
+    elif current_goal == 9:
+        response = ask_final_catch_all()
+    elif current_goal == 10:
+        # Завершающее сообщение и терминатор
+        final_message = (
+            "Отлично! Все ваши вводные учтем максимально. Эксперт подготовит для вас "
+            "подборку туров, и свяжется с вами"
+        )
+        response = terminate(final_message)
+        agent_state["conversation_active"] = False
+        agent_state["goal_completed"] = True
     else:
         response = "Travel planning session completed. Thank you!"
     
     memory.add_memory({"type": "assistant", "content": response})
+    # Храним последний ответ агента для истории диалога
+    agent_state["last_agent_response"] = response
     
     return memory
 
 def process_user_response(user_response: str):
     """Process user response and advance to next goal"""
     
-    # Store the user's response based on current goal
-    current_goal = agent_state["current_goal"]
+    from game.core import Memory
     
+    current_goal = agent_state["current_goal"]
+    responses = agent_state["user_responses"]
+    
+    # Жестко фиксируем тип поездки
+    responses["trip_type"] = "Организованный туризм через турфирму"
+    
+    # Подготовка текста вопроса для валидатора по текущей цели
+    question_text_map = {
+        1: "Пожалуйста, укажите даты поездки",
+        2: "Хорошо. Кто поедет? Сколько взрослых?",
+        3: "Поедут ли дети? (Да/Нет)",
+        4: "Уточните возраст детей?",
+        5: "Есть ли пожелания по направлению/стране/городу назначения?",
+        6: "Хорошо. В какой общий бюджет хотели бы уложиться?",
+        7: "Откуда планируете стартовать?",
+        8: "Пожалуйста, ответьте на уточняющий вопрос по путешествию",
+        9: (
+            "Спасибо за Ваши ответы. Подскажите, какие еще моменты важно учесть "
+            "при составлении подборки туров, которые ранее не обсудили?"
+        ),
+    }
+    question_asked = question_text_map.get(current_goal, "")
+    
+    # Валидация ответа пользователя (защита от "дурака")
+    if question_asked:
+        validation_result = validate_user_input(question_asked, user_response)
+        if not validation_result.get("is_valid", True):
+            # Не меняем current_goal, возвращаем вежливую просьбу
+            reason = validation_result.get("reason") or question_asked
+            memory = Memory()
+            memory.add_memory({"type": "user", "content": user_response})
+            memory.add_memory({"type": "assistant", "content": reason})
+            return memory
+    
+    # Сохранение ответа и переходы по целям
     if current_goal == 1:
-        agent_state["user_responses"]["trip_type"] = user_response
-        # Переход на следующую цель после успешного ответа
+        # Первый ответ всегда трактуем как даты поездки
+        responses["travel_dates"] = user_response
         agent_state["current_goal"] = 2
     elif current_goal == 2:
-        agent_state["user_responses"]["destination"] = user_response
-        # Переход на следующую цель после успешного ответа
+        responses["group_size"] = user_response
         agent_state["current_goal"] = 3
     elif current_goal == 3:
-        agent_state["user_responses"]["group_size"] = user_response
-        # Переход на следующую цель после успешного ответа
-        agent_state["current_goal"] = 4
+        responses["children_exist"] = user_response
+        # Если детей нет, сразу прыгаем на Goal 5
+        if "нет" in user_response.lower() or "no" in user_response.lower():
+            responses["children_info"] = "Детей нет"
+            agent_state["current_goal"] = 5
+        else:
+            agent_state["current_goal"] = 4
     elif current_goal == 4:
-        agent_state["user_responses"]["travel_dates"] = user_response
-        # Переход на следующую цель после успешного ответа
+        responses["children_age"] = user_response
+        # Формируем сводную информацию о детях
+        responses["children_info"] = f"Дети: {user_response}"
         agent_state["current_goal"] = 5
     elif current_goal == 5:
-        agent_state["user_responses"]["departure_city"] = user_response
-        # Переход на следующую цель после успешного ответа
+        responses["destination"] = user_response
         agent_state["current_goal"] = 6
+    elif current_goal == 6:
+        responses["budget"] = user_response
+        agent_state["current_goal"] = 7
     elif current_goal == 7:
-        # Handle feedback analysis
-        agent_state["user_responses"]["feedback"] = user_response
-        sentiment = analyze_feedback_sentiment(user_response)
-        
-        if sentiment == "negative":
-            # Stay on goal 7 but show negative feedback analysis
-            agent_state["current_goal"] = 7  # Stay on current goal
-            agent_state["error_count"] = 0
-            agent_state["has_asked_goal_1"] = True
-            
-            # Create memory with negative feedback response
-            from game.core import Memory
-            memory = Memory()
-            memory.add_memory({"type": "user", "content": user_response})
-            memory.add_memory({"type": "assistant", "content": analyze_negative_feedback()})
-            return memory
-        elif sentiment == "positive":
-            # Move to goal 8 (human agent connection)
-            agent_state["current_goal"] = 8
-        else:
-            # Neutral feedback - ask for clarification
-            agent_state["current_goal"] = 7  # Stay on current goal
-            agent_state["error_count"] = 0
-            agent_state["has_asked_goal_1"] = True
-            
-            # Create memory with clarification request
-            from game.core import Memory
-            memory = Memory()
-            memory.add_memory({"type": "user", "content": user_response})
-            memory.add_memory({"type": "assistant", "content": "Пожалуйста, уточните ваше мнение. Вам понравились рекомендации или есть что-то, что нужно улучшить?"})
-            return memory
+        responses["departure_city"] = user_response
+        agent_state["current_goal"] = 8
     elif current_goal == 8:
-        # Handle human agent connection response
-        agent_state["user_responses"]["human_agent_request"] = user_response
-        # End the conversation
-        agent_state["conversation_active"] = False
-        agent_state["goal_completed"] = True
+        # Динамический цикл Perplexity
+        # Накапливаем историю уточняющих вопросов и ответов
+        last_agent_question = agent_state.get("last_agent_response", "")
+        if "dialogue_history" not in responses:
+            responses["dialogue_history"] = []
+        dialogue_entry = f"Вопрос: {last_agent_question} | Ответ: {user_response}"
+        responses["dialogue_history"].append(dialogue_entry)
         
-        # Create final memory
-        from game.core import Memory
+        # Увеличиваем счетчик динамических вопросов
+        agent_state["dynamic_questions_count"] = agent_state.get("dynamic_questions_count", 0) + 1
+        
+        # Если достигнут лимит, переходим на Goal 9
+        if agent_state["dynamic_questions_count"] >= 10:
+            agent_state["dynamic_completed"] = True
+            agent_state["current_goal"] = 9
+            
+            # Задаем финальный вопрос (Goal 9)
+            memory = Memory()
+            memory.add_memory({"type": "user", "content": user_response})
+            memory.add_memory({"type": "assistant", "content": ask_final_catch_all()})
+            agent_state["last_agent_response"] = ask_final_catch_all()
+            return memory
+        else:
+            # Остаемся на Goal 8 и генерируем следующий вопрос через Perplexity
+            trip_type = responses.get("trip_type", "Организованный туризм через турфирму")
+            destination = responses.get("destination", "")
+            group_size = responses.get("group_size", "")
+            travel_dates = responses.get("travel_dates", "")
+            departure_city = responses.get("departure_city", "")
+            budget = responses.get("budget", "")
+            children_info = responses.get("children_info", "")
+            dialogue_history = responses.get("dialogue_history", [])
+            history_dialogue = "\n".join(dialogue_history) if dialogue_history else ""
+            
+            perplexity_answer = get_perplexity_recommendations(
+                trip_type,
+                destination,
+                group_size,
+                travel_dates,
+                departure_city,
+                budget,
+                children_info,
+                history_dialogue,
+            )
+            agent_state["last_agent_response"] = perplexity_answer
+            
+            memory = Memory()
+            memory.add_memory({"type": "user", "content": user_response})
+            memory.add_memory({"type": "assistant", "content": perplexity_answer})
+            return memory
+    elif current_goal == 9:
+        # Финальный открытый ответ перед завершением
+        responses["final_notes"] = user_response
+        agent_state["current_goal"] = 10
+        # Следующее сообщение будет терминальным
+        return run_travel_agent_with_input("continue")
+    elif current_goal == 10:
+        # Если пользователь что-то пишет после финального сообщения, просто завершаем
         memory = Memory()
         memory.add_memory({"type": "user", "content": user_response})
-        
-        if "да" in user_response.lower() or "yes" in user_response.lower():
-            final_response = "Отлично! Наш турагент свяжется с вами в ближайшее время. Спасибо за использование нашего сервиса! ✈️"
-        else:
-            final_response = "Спасибо за использование нашего сервиса! Если у вас возникнут вопросы, мы всегда готовы помочь. Удачного путешествия! 🎉"
-        
-        memory.add_memory({"type": "assistant", "content": final_response})
+        final_message = (
+            "Отлично! Все ваши вводные учтем максимально. Эксперт подготовит для вас "
+            "подборку туров, и свяжется с вами"
+        )
+        memory.add_memory({"type": "assistant", "content": terminate(final_message)})
+        agent_state["conversation_active"] = False
+        agent_state["goal_completed"] = True
         return memory
-    elif current_goal == 6:
-        # Локализованный цикл на Goal 6
-        ok_words = ["да", "ок", "хорошо", "подходит", "супер", "отлично", "устраивает"]
-        if any(word in user_response.lower() for word in ok_words):
-            # Если есть подтверждение, переходим на цель 7
-            agent_state["current_goal"] = 7
-        else:
-            # Если пользователь НЕ ввел подтверждение, сохраняем историю диалога
-            # Извлекаем текст последнего ответа агента из agent_state
-            last_agent_question = agent_state.get("last_agent_response", "")
-            
-            # Инициализируем dialogue_history если его нет
-            if "dialogue_history" not in agent_state["user_responses"]:
-                agent_state["user_responses"]["dialogue_history"] = []
-            
-            # Сохраняем новую запись в dialogue_history
-            dialogue_entry = f"Вопрос: {last_agent_question} | Ответ: {user_response}"
-            agent_state["user_responses"]["dialogue_history"].append(dialogue_entry)
-            
-            # Строго оставляем current_goal = 6 (не меняем ни на 7, ни на 1)
-            agent_state["current_goal"] = 6
-
-    # Return the next question or summary
+    
+    # По умолчанию — отдаем управление генерации следующего шага
     return run_travel_agent_with_input("continue")
 
 def process_travel_request(message: str, user_id: str = None) -> Dict[str, Any]:
@@ -708,31 +676,12 @@ def process_travel_request(message: str, user_id: str = None) -> Dict[str, Any]:
         goal_completed = agent_state.get("goal_completed", False)
         current_goal = agent_state.get("current_goal", 1)
         
-        # НЕ сбрасываем состояние, если разговор активен и мы находимся на цели > 1
-        # Это гарантирует, что обычные ответы пользователя не будут распознаны как новый разговор
-        if conversation_active and current_goal > 1:
-            # Продолжаем активный разговор без сброса
-            pass
-        elif goal_completed or not conversation_active:
-            # Сбрасываем только если разговор завершен или не активен
+        # Сбрасываем состояние только если разговор явно завершен или не активен
+        if goal_completed or not conversation_active:
             reset_agent_state()
-        else:
-            # Для цели 1 проверяем, является ли это явным запросом на новый разговор
-            # Ключевые слова должны быть в начале сообщения
-            message_lower = message.lower().strip()
-            new_conversation_keywords = ["travel", "поездка", "путешествие", "начать", "новый", "снова", "привет"]
-            is_new_conversation = any(message_lower.startswith(keyword) for keyword in new_conversation_keywords)
-            
-            if is_new_conversation and not agent_state.get("has_asked_goal_1", False):
-                reset_agent_state()
         
-        # Check if this is a continuation of an existing conversation
-        if agent_state["current_goal"] > 1 or (agent_state["current_goal"] == 1 and agent_state.get("has_asked_goal_1", False)):
-            # Process user response and advance to next goal
-            final_memory = process_user_response(message)
-        else:
-            # Start new conversation
-            final_memory = run_travel_agent_with_input(message)
+        # Всегда трактуем входящее сообщение как ответ на текущую цель
+        final_memory = process_user_response(message)
 
         # Convert memory to list format for JSON response
         memory_list = []
