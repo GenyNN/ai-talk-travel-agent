@@ -8,8 +8,11 @@ and includes error handling for invalid responses.
 import importlib
 import os
 import json
+import asyncio
+import random
 from typing import List, Dict, Any
 from dotenv import load_dotenv
+import re
 
 # Import the Game framework
 import game.core
@@ -23,6 +26,7 @@ load_dotenv()
 # Configure litellm for OpenRouter function calling
 import litellm
 litellm.set_verbose=True
+litellm.drop_params=True
 # Note: add_function_to_prompt can cause issues with newer litellm versions
 # litellm.add_function_to_prompt = True
 
@@ -107,7 +111,7 @@ def ask_group_size() -> str:
 @register_tool(tags=["interview", "goal_3"])
 def ask_children_exist() -> str:
     """Ask if children will travel."""
-    return "Поедут ли дети? (Да/Нет)"
+    return "Поедут ли дети?"
 
 
 @register_tool(tags=["interview", "goal_4"])
@@ -142,6 +146,44 @@ def ask_final_catch_all() -> str:
         "при составлении подборки туров, которые ранее не обсудили?"
     )
 
+
+def clean_perplexity_response(text: str) -> str:
+    import re
+
+    # 1. Удаляем Markdown жирность (превращаем **текст** в текст)
+    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
+
+    # 2. Удаляем сноски [1], [s1] и т.д.
+    text = re.sub(r'\[\d+\]', '', text)
+    text = re.sub(r'\[s\d+\]', '', text)
+
+    # 3. Список фраз-приветствий для удаления из начала
+    """bad_starts = [
+        "Добрый день", "Здравствуйте", "Приветствую",
+        "Спасибо за уточнение", "Понял Вас", "Понял Вашу позицию",
+        "Рад помочь", "Отличный выбор"
+    ]"""
+
+    # Чистим начало текста от вежливости
+    """for start in bad_starts:
+        # Ищем фразу в начале, учитывая возможные знаки препинания после неё
+        pattern = re.compile(r'^' + re.escape(start) + r'[\s\d.,!]*', re.IGNORECASE)
+        text = pattern.sub('', text).strip()"""
+
+    # 4. ВАЖНО: Вместо замены всех пробелов на один,
+    # заменяем только ТРОЙНЫЕ и более переносы на двойные, чтобы сохранить абзацы
+    text = re.sub(r'\n{3,}', '\n\n', text)
+
+    # Убираем лишние пробелы в концах строк, но сохраняем сами строки
+    text = "\n".join([line.strip() for line in text.split('\n')])
+
+    # Капитализируем первую букву результата
+    if text:
+        text = text[0].upper() + text[1:]
+
+    return text.strip()
+
+
 def get_perplexity_recommendations(
     trip_type: str,
     destination: str,
@@ -169,22 +211,79 @@ def get_perplexity_recommendations(
     
     # Construct the prompt according to new requirements
     prompt = f"""
-    Ты опытный турагент. Проанализируй переписку и дай краткий максимально человечный ответ не более 11-12 слов и в конце Задавай ТОЛЬКО ОДИН вопрос для следующего диалога. Вопрос должен идти в самом конце ответа и самом последнем абзаце.
-Вопрос в конце должен раскрывать потребность человека и при этом чтобы каждый следующий вопрос не повторял предыдущие, проверял на адекватность, квалифицировал как лида и двигал по маркетинговой воронке к покупке тура у агента.
+Ты — ведущий и опытный эксперт тревел-агентства.  Ты продолжаешь уже начатый диалог, который тебе передают. 
+Твоя задача — провести глубокую и вежливую консультацию и беседу, общаясь строго на \"Вы\". 
+ЦЕЛЬ - сделать из этого холодного лида, уже теплого лида которому продаст тур реальный туристический агент. 
+Для этого нужно пообщаться с лидом, объяснить ему все, так чтобы ему стало интересно то, 
+что ты предлагаешь и сделать так чтобы ему захотелось сначала созвониться и встретиться с реальным туристическим агентом
+для обсуждения уже целенаправленной покупки тура.
 
-ПРАВИЛА:
-1. НИКОГДА не называй цены, отели, рейсы.
-2. НИКОГДА не давай конкретных рекомендаций, не навязывай свое мнение, но при этом твои советы должны раскрывать потребность туриста. 
-3. Задавай ВОПРОСЫ для уточнения потребностей.
-4. Если просят конкретику — вежливо поясни, что нужно больше данных для составления индивидуальной подборки и ненавязчиво предлагай созвон или встречу в офисе с живым турагентом.
-5. Говори как живой человек, естественно.
+ФОРМАТ: 
+- Твой ответ должен состоять из двух частей.
+- Часть 1: Твой комментарий эксперта.
+- Часть 2: Уточняющий вопрос.
+- МЕЖДУ НИМИ ОБЯЗАТЕЛЬНО ДОЛЖНО БЫТЬ ДВА ПЕРЕНОСА СТРОКИ (пустая строка).
+
+КРИТИЧЕСКИЕ ПРАВИЛА (ЗА НАРУШЕНИЕ — ШТРАФ):
+1. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО здороваться ("Добрый день", "Здравствуйте", "Спасибо, что обратились" и т.д.). По потяных причинам выше.
+2. СРАЗУ ПЕРЕХОДИ К СУТИ: дай комментарий по текущим данным (не более 2-4 предложений).
+3. ВОПРОС В КОНЦЕ: В самом конце должен быть ровно ОДИН уточняющий вопрос.
+4. ФОРМАТ: Вопрос который квонце должен быть отделен от основного текста ПУСТОЙ СТРОКОЙ (двойной перенос строки) и идти отдельным обзацем!
+5. НИКАКИХ СНОСОК: Не используй [1], [2] и прочие ссылки.
+6. Выводи только обычный текст. Ссылки только если пользователь сам попросит и будет появлять повышеный интерес.
+Ссылки приветсвуются в основном только на отели, достопримечательности и так далее. На перелеты и траспортные рейсы же - НИКАКИХ ССЫЛОК!
+7. НИКОГДА не называй цены, рейсы транспорта.
+8. НИКОГДА не навязывай свое мнение, но при этом твои советы должны раскрывать потребность туриста. 
+9. Задавай ВОПРОСЫ для уточнения потребностей.
+10. Если просят конкретику (отели, места и т.п.) — вежливо поясни, что нужно больше данных для составления индивидуальной подборки и ненавязчиво предлагай созвон или встречу в офисе с живым турагентом. В конце такого ответа добавь вопрос: \"Хотите, я подготовлю для Вас подборку прямых ссылок на проверенные отели/достопримечательности в этом регионе?\".
+11. Говори как живой человек, естественно.
+12. Если клиент проявляет к чему-то интерес, например к отелю, то можешь при его запросе дать больше информации или ссылку на этот объект, но сам без спроса ничего не присылай.
+13. НЕ предлагай Черногорию, если пользователь явно о ней не спросил.
+14. Если клиент не определился с местом или путается, не выбирай за него. Вместо этого задай наводящий вопрос (например, о предпочтительном климате, типе пляжа или длительности перелёта), чтобы помочь ему сузить выбор.
+
+
+ИНСТРУКЦИИ ПО ТОНУ:
+- Говори как живой человек, но сохраняй статус эксперта.
+- Будь вежлив, избегай фамильярности.
+- Если чувствуешь, что клиент запутался, не навязывай страну и место (особенно Черногорию), а мягко помоги ему определиться вопросом.
+
+ТВОЙ ОТВЕТ:
+- Не более 25-41 слов БЕЗ УЧЕТА УТОЧНЯЮЩЕГО ВОПРОСА В КОНЦЕ.  
+- Максимально человечный и полезный комментарий по ситуации.
+- Проанализируй переписку и в конце задай ОДИН уточняющий вопрос для следующего диалога и конверсии в покупку тура. Вопрос должен идти в самом конце ответа и самом последнем абзаце.
+- Вопрос в конце должен раскрывать потребность человека и при этом чтобы каждый следующий вопрос не повторял предыдущие, проверял на адекватность, квалифицировал как лида и двигал по маркетинговой воронке к покупке тура у агента.
+
+
+ВЫБОР УМНОГО ВОПРОСА:
+- Выбирай ОДИН вопрос из предложенного списка умных вопросов, только если он идеально подходит под текущий контекст диалога.
+- Перелёты: вопросы про рейсы и пересадки уместны, если детей нет или дети старше 10–11 лет.
+- Пляж/звёздность/линия пляжа: вопросы про компромисс между первой линией и уровнем сервиса уместны, если бюджет ограничен.
+- Экскурсии/активность: вопросы про экскурсии и активный отдых уместны, если уже обсуждается конкретное направление или тип отдыха.
+- Пляж (песок/галька): уместно, если выбран пляжный отдых.
+- Гибкость дат: уместно, если указаны жёсткие конкретные даты.
+- Призыв к действию (офис/звонок): уместен, если квалификация почти завершена и клиент понимает свои потребности.
+
+ПРИМЕРНЫЙ СПИСОК УМНЫХ ДОПОЛНИТЕЛЬНЫХ ВОПРОСОВ (используй подходящий по контексту):
+1. Отели: \"Какие отели Вы предпочитаете: с активной анимацией или более тихие, семейные?\"
+2. Пляж: \"Какой берег Вам ближе: золотистый песок или аккуратная галька?\"
+(вопрос уместен, если клиент выбрал пляжный отдых)
+3. Логистика: \"Готовы ли Вы рассматривать рейсы с короткими пересадками, если это даст выгоду в цене?\" (только если дети старше 10 лет или их нет)
+4. Бюджет: \"Допускаете ли Вы варианты отелей чуть дальше от моря, чтобы повысить уровень самого сервиса и сделать цену оптимальной?\"
+5. Активность: \"Интересны ли Вам экскурсии, или в этот раз хочется максимально спокойного отдыха?\"
+(вопрос уместен, если указано направление, где большой спрос на экскурсии или клиента не интересует ленивый отдых)
+6. Конверсия: \"Удобно ли Вам будет обсудить детали в коротком звонке или встретиться у нас в офисе за чашкой чая или кофе?\"
+7. Активность: \"Планируете ли активный отдых или хотели бы более лениво или может баланс?\" (вопрос уместен, если детей нет, либо возраст детей более 7 лет)
+8. Время: \"У Вас строгие ли даты поездки или возможны гибкие даты ±3 дня?\"
+(вопрос уместен, если клиент выбрал конкретные даты поездки)
+9. Конверсия в продажу: \"Удобно ли Вам созвониться или встретиться у нас в офисе для обсуждения подборки туров?\"
+
 
 Используй следующие критерии:
 Критерий 1 - Тип поездки: {trip_type}
 Критерий 2 — Пункт назначения: {destination}
 Критерий 3 - Количество человек: {group_size}
 Критерий 4 — Даты поездки: {travel_dates}
-Критерий 5 - Город отправления: {departure_city}
+Критерий 5 - Место отправления: {departure_city}
 Критерий 6 - Бюджет: {budget}
 Критерий 7 - Наличие и возраст детей: {children_info}
 Критерий 8 - История уточняющих вопросов и ответов: {history_dialogue}
@@ -215,14 +314,15 @@ def get_perplexity_recommendations(
             json=data,
             timeout=30
         )
-        
+
         if response.status_code == 200:
             result = response.json()
             content = result["choices"][0]["message"]["content"]
-            
-            return content
+
+            # ВОТ ЭТА ПРАВКА: вызываем функцию очистки перед тем как вернуть текст
+            return clean_perplexity_response(content)
         else:
-            return f"❌ Ошибка API: {response.status_code} - {response.text}"
+            return f"❌ Ошибка API: {response.status_code} - {response.text} - {response.text}"
             
     except requests.exceptions.Timeout:
         return "❌ Превышено время ожидания ответа от API. Попробуйте позже."
@@ -267,51 +367,54 @@ If you're unsure or embarrassed to answer, please let me know when would be a go
 Please provide a clear answer so we can continue with your travel planning."""
 
 
-def validate_user_input(question_asked: str, user_answer: str) -> dict:
-    """Validate user input with a fast LLM before accepting it.
-    
-    Returns a dict with keys: is_valid (bool), reason (str).
+async def validate_user_input(question_asked: str, user_answer: str) -> dict:
     """
-    system_prompt = (
-        "Ты строгий, но вежливый ассистент. Твоя задача — проверить, отвечает ли "
-        "реплика пользователя на заданный вопрос. Если ответ адекватный (даже если короткий) — "
-        'верни JSON {"is_valid": true, "reason": ""}. Если пользователь пишет явный бред, '
-        "оскорбления или текст не по теме — верни JSON "
-        '{"is_valid": false, "reason": "Вежливая просьба ответить на вопрос: [текст вопроса]"}."'
-    )
-    
+    Валидация ответа с упором на понимание смысла и прощение опечаток.
+    """
+    prompt = f"""
+    Ты — опытный и понимающий и харизматичный тревел-эксперт. Твоя цель — понять, ответил ли пользователь на вопрос, даже если он допустил опечатки.
+
+    ВОПРОС: "{question_asked}"
+    ОТВЕТ ПОЛЬЗОВАТЕЛЯ: "{user_answer}"
+
+    ТВОЯ ЗАДАЧА:
+    1. Если в ответе есть ПОНЯТНЫЙ СМЫСЛ, подходящий к вопросу (например, "актиной" вместо "активной", "масква" вместо "Москва", "да" вместо "Да, хочу") — считай ответ ВАЛИДНЫМ (true).
+    2. Опечатки, сокращения или пропуск букв — это НОРМАЛЬНО. Не будь занудой.
+    3. НЕВАЛИДНЫМ (false) считай только полный бред:
+       - Случайный набор букв (фыва, ghj, th).
+       - Одиночные символы, не несущие смысла (., !, ?).
+       - Ответы, которые технически невозможно соотнести с вопросом (например, на вопрос про отели ответить "синий").
+       - на неадекварные ответы, вроде мата отвечай вежливо, но напоминай пользователю что от него ждут ответ на вопрос
+
+    ФОРМАТ ОТВЕТА (JSON):
+    Если смысл понятен: {{"is_valid": true}}
+    Если совсем бред: {{"is_valid": false, "reason": "Придумай ОЧЕНЬ человечную, разную каждый раз фразу, почему ты не понял"}}
+    """
+
     try:
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": (
-                    f"Вопрос: {question_asked}\n"
-                    f"Ответ пользователя: {user_answer}\n"
-                    "Верни только JSON без пояснений."
-                ),
-            },
-        ]
-        
-        response = litellm.completion(
-            model="gemini-2.0-flash-exp:free",
-            messages=messages,
-            max_tokens=128,
-            temperature=0.0,
+        response = await asyncio.to_thread(
+            litellm.completion,
+            model="openrouter/google/gemini-2.0-flash-001",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
         )
-        content = response["choices"][0]["message"]["content"]
-        
-        # Попробуем вытащить JSON даже если вокруг есть лишний текст/форматирование
-        start = content.find("{")
-        end = content.rfind("}")
-        if start != -1 and end != -1:
-            json_str = content[start : end + 1]
-            return json.loads(json_str)
-    except Exception:
-        # При ошибке валидатор не блокирует пользователя
-        pass
-    
-    return {"is_valid": True, "reason": ""}
+
+        content = response.choices[0].message.content.strip()
+        # Очистка от Markdown
+        if "```json" in content:
+            content = content.split("```json")[1].split("```")[0].strip()
+        elif "```" in content:
+            content = content.split("```")[1].split("```")[0].strip()
+
+        result = json.loads(content)
+        return result
+
+    except Exception as e:
+        print(f"⚠️ Ошибка в валидаторе: {e}")
+        return {"is_valid": True}  # В любой непонятной ситуации пропускаем ответ
+
+
+
 
 @register_tool(tags=["error_handling", "goal_9"])
 def handle_user_error() -> str:
@@ -447,14 +550,10 @@ def create_travel_agent():
     
     return travel_agent
 
-def run_travel_agent_with_input(user_input: str):
-    """Run the travel agent with provided input and return the memory"""
-    
-    # Create a simple memory to track the conversation
+async def run_travel_agent_with_input(user_input: str):
+    """Run the travel agent with provided input and return the memory (async wrapper)."""
     from game.core import Memory
     memory = Memory()
-    
-    # Add the initial user input
     memory.add_memory({"type": "user", "content": user_input})
     
     current_goal = agent_state["current_goal"]
@@ -512,13 +611,11 @@ def run_travel_agent_with_input(user_input: str):
         response = "Travel planning session completed. Thank you!"
     
     memory.add_memory({"type": "assistant", "content": response})
-    # Храним последний ответ агента для истории диалога
     agent_state["last_agent_response"] = response
-    
     return memory
 
-def process_user_response(user_response: str):
-    """Process user response and advance to next goal"""
+async def process_user_response(user_response: str):
+    """Process user response and advance to next goal (async with smart validation)."""
     
     from game.core import Memory
     
@@ -532,7 +629,7 @@ def process_user_response(user_response: str):
     question_text_map = {
         1: "Пожалуйста, укажите даты поездки",
         2: "Хорошо. Кто поедет? Сколько взрослых?",
-        3: "Поедут ли дети? (Да/Нет)",
+        3: "Поедут ли дети?",
         4: "Уточните возраст детей?",
         5: "Есть ли пожелания по направлению/стране/городу назначения?",
         6: "Хорошо. В какой общий бюджет хотели бы уложиться?",
@@ -547,7 +644,7 @@ def process_user_response(user_response: str):
     
     # Валидация ответа пользователя (защита от "дурака")
     if question_asked:
-        validation_result = validate_user_input(question_asked, user_response)
+        validation_result = await validate_user_input(question_asked, user_response)
         if not validation_result.get("is_valid", True):
             # Не меняем current_goal, возвращаем вежливую просьбу
             reason = validation_result.get("reason") or question_asked
@@ -599,7 +696,7 @@ def process_user_response(user_response: str):
         agent_state["dynamic_questions_count"] = agent_state.get("dynamic_questions_count", 0) + 1
         
         # Если достигнут лимит, переходим на Goal 9
-        if agent_state["dynamic_questions_count"] >= 10:
+        if agent_state["dynamic_questions_count"] >= 11:
             agent_state["dynamic_completed"] = True
             agent_state["current_goal"] = 9
             
@@ -642,7 +739,7 @@ def process_user_response(user_response: str):
         responses["final_notes"] = user_response
         agent_state["current_goal"] = 10
         # Следующее сообщение будет терминальным
-        return run_travel_agent_with_input("continue")
+        return await run_travel_agent_with_input("continue")
     elif current_goal == 10:
         # Если пользователь что-то пишет после финального сообщения, просто завершаем
         memory = Memory()
@@ -657,9 +754,9 @@ def process_user_response(user_response: str):
         return memory
     
     # По умолчанию — отдаем управление генерации следующего шага
-    return run_travel_agent_with_input("continue")
+    return await run_travel_agent_with_input("continue")
 
-def process_travel_request(message: str, user_id: str = None) -> Dict[str, Any]:
+async def process_travel_request(message: str, user_id: str = None) -> Dict[str, Any]:
     """
     Common function to process travel requests for both API and Telegram.
     
@@ -681,7 +778,7 @@ def process_travel_request(message: str, user_id: str = None) -> Dict[str, Any]:
             reset_agent_state()
         
         # Всегда трактуем входящее сообщение как ответ на текущую цель
-        final_memory = process_user_response(message)
+        final_memory = await process_user_response(message)
 
         # Convert memory to list format for JSON response
         memory_list = []
@@ -696,7 +793,10 @@ def process_travel_request(message: str, user_id: str = None) -> Dict[str, Any]:
             status = "completed"
         else:
             status = "in_progress"
-        
+
+        # Имитация человеческой задержки перед ответом
+        await asyncio.sleep(random.randint(1, 1))
+
         return {
             "memory": memory_list,
             "status": status,
@@ -729,7 +829,7 @@ def run_travel_agent():
     print("\n🤖 Agent is processing your request...")
     
     # Run the agent
-    final_memory = run_travel_agent_with_input(user_input)
+    final_memory = asyncio.run(run_travel_agent_with_input(user_input))
     
     # Display the final memory
     print("\n" + "=" * 62)

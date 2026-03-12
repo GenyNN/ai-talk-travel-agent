@@ -133,7 +133,7 @@ async def travel_agent(request: TravelAgentRequest):
     """
     try:
         # Use the common function to process the travel request
-        result = process_travel_request(request.message)
+        result = await process_travel_request(request.message)
         
         return TravelAgentResponse(
             memory=result["memory"],
@@ -213,7 +213,7 @@ async def travel_handler(message: Message):
     user_text = message.text
 
     # Передаем строку с префиксом, чтобы сессии не пересекались
-    response = process_travel_agent_message(user_id, user_text)
+    response = await process_travel_agent_message(user_id, user_text)
     await message.answer(response)
 
     # # Пример простого ответа:
@@ -277,7 +277,7 @@ if __name__ == "__main__":
 
     async def main():
         # Настройка сервера FastAPI
-        config = uvicorn.Config(app, host="0.0.0.0", port=8081)
+        config = uvicorn.Config(app, host="0.0.0.0", port=8080)
         server = uvicorn.Server(config)
 
         print("🚀 СИСТЕМА ЗАПУСКАЕТСЯ: API + VK BOT")

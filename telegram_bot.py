@@ -60,8 +60,8 @@ def reset_user_session(user_id: int):
         "has_asked_goal_1": False
     }
 
-def process_travel_agent_message(user_id: int, message_text: str) -> str:
-    """Process message through travel agent and return response"""
+async def process_travel_agent_message(user_id: int, message_text: str) -> str:
+    """Process message through travel agent and return response (async)."""
     try:
         # Get user session
         session = get_user_session(user_id)
@@ -71,7 +71,7 @@ def process_travel_agent_message(user_id: int, message_text: str) -> str:
         agent_state.update(session)
         
         # Use the common function to process the travel request
-        result = process_travel_request(message_text) #str(user_id)
+        result = await process_travel_request(message_text)  # str(user_id)
         
         # Update user session with current agent state
         session.update(agent_state)
