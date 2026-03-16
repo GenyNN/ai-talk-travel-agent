@@ -207,14 +207,39 @@ async def health_check():
     return {"status": "healthy", "service": "ai-talk-travel-agent"}
 
 
+async def keep_typing(peer_id):
+    """Фоновая задача для поддержания статуса 'печатает'"""
+    try:
+        while True:
+            await botVK.api.messages.set_activity(peer_id=peer_id, type="typing")
+            await asyncio.sleep(5)  # Повторяем каждые 5 секунд
+    except asyncio.CancelledError:
+        # Задача будет отменена, когда придет ответ
+        pass
+
 @botVK.on.message()
 async def travel_handler(message: Message):
     user_id = f"vk_{message.from_id}"  # Добавляем префикс платформы
     user_text = message.text
 
-    # Передаем строку с префиксом, чтобы сессии не пересекались
-    response = await process_travel_agent_message(user_id, user_text)
-    await message.answer(response)
+    # 1. Запускаем "вечное" печатание в фоновом режиме
+    typing_task = asyncio.create_task(keep_typing(message.peer_id))
+    # ---------------------
+
+    try:
+        # 2. Ждем ответа от агента (тут может быть долгая задержка)
+        response = await process_travel_agent_message(user_id, user_text)
+
+        # 3. Как только ответ готов, останавливаем "печатание"
+        typing_task.cancel()
+
+        # 4. Отправляем сам ответ
+        await message.answer(response)
+
+    except Exception as e:
+        typing_task.cancel()
+        print(f"Ошибка: {e}")
+        await message.answer("Извините, подождите пожалуйста")
 
     # # Пример простого ответа:
     # if "привет" in user_text.lower():

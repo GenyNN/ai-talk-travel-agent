@@ -70,8 +70,7 @@ async def process_travel_agent_message(user_id: int, message_text: str) -> str:
         global agent_state
         agent_state.update(session)
         
-        # Use the common function to process the travel request
-        result = await process_travel_request(message_text)  # str(user_id)
+        result = await process_travel_request(message_text, str(user_id))
         
         # Update user session with current agent state
         session.update(agent_state)

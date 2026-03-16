@@ -13,6 +13,8 @@ import random
 from typing import List, Dict, Any
 from dotenv import load_dotenv
 import re
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
 
 # Import the Game framework
 import game.core
@@ -43,6 +45,14 @@ agent_state = {
     "dynamic_questions_count": 0,
     "dynamic_completed": False
 }
+
+def log_conversation(user_id: str, sender: str, text: str):
+    msk = timezone(timedelta(hours=3))
+    now = datetime.now(msk).strftime("%Y-%m-%d %H:%M:%S")
+    base_dir = Path(__file__).resolve().parent
+    file_path = base_dir / f"Conversation_VK_{user_id}.txt"
+    with open(file_path, "a", encoding="utf-8") as f:
+        f.write(f"[{now}] {sender}: {text}\n\n")
 
 def reset_agent_state():
     """Reset the agent state for a new conversation"""
@@ -215,8 +225,7 @@ def get_perplexity_recommendations(
 Твоя задача — провести глубокую и вежливую консультацию и беседу, общаясь строго на \"Вы\". 
 ЦЕЛЬ - сделать из этого холодного лида, уже теплого лида которому продаст тур реальный туристический агент. 
 Для этого нужно пообщаться с лидом, объяснить ему все, так чтобы ему стало интересно то, 
-что ты предлагаешь и сделать так чтобы ему захотелось сначала созвониться и встретиться с реальным туристическим агентом
-для обсуждения уже целенаправленной покупки тура.
+что ты предлагаешь и сделать так чтобы ему захотелось сначала созвониться и встретиться с реальным туристическим агентом для обсуждения уже целенаправленной покупки тура.
 
 ФОРМАТ: 
 - Твой ответ должен состоять из двух частей.
@@ -230,8 +239,8 @@ def get_perplexity_recommendations(
 3. ВОПРОС В КОНЦЕ: В самом конце должен быть ровно ОДИН уточняющий вопрос.
 4. ФОРМАТ: Вопрос который квонце должен быть отделен от основного текста ПУСТОЙ СТРОКОЙ (двойной перенос строки) и идти отдельным обзацем!
 5. НИКАКИХ СНОСОК: Не используй [1], [2] и прочие ссылки.
-6. Выводи только обычный текст. Ссылки только если пользователь сам попросит и будет появлять повышеный интерес.
-Ссылки приветсвуются в основном только на отели, достопримечательности и так далее. На перелеты и траспортные рейсы же - НИКАКИХ ССЫЛОК!
+6. Выводи только обычный текст. Ссылки только если пользователь сам попросит и будет проявлять повышенный интерес.
+Ссылки приветствуются в основном только на отели, достопримечательности и так далее. На перелеты и траспортные рейсы же - НИКАКИХ ССЫЛОК!
 7. НИКОГДА не называй цены, рейсы транспорта.
 8. НИКОГДА не навязывай свое мнение, но при этом твои советы должны раскрывать потребность туриста. 
 9. Задавай ВОПРОСЫ для уточнения потребностей.
@@ -240,6 +249,8 @@ def get_perplexity_recommendations(
 12. Если клиент проявляет к чему-то интерес, например к отелю, то можешь при его запросе дать больше информации или ссылку на этот объект, но сам без спроса ничего не присылай.
 13. НЕ предлагай Черногорию, если пользователь явно о ней не спросил.
 14. Если клиент не определился с местом или путается, не выбирай за него. Вместо этого задай наводящий вопрос (например, о предпочтительном климате, типе пляжа или длительности перелёта), чтобы помочь ему сузить выбор.
+15. Также не надоедай постоянно вопросом в конце
+когда предлагаешь и спрашиваешь "Удобно ли Вам созвониться или встретиться у нас в офисе для обсуждения подборки туров?".  Не нужно быть настолько настойчивым. Делай это не чаще чем через 2-3 ответа и когда это уместно
 
 
 ИНСТРУКЦИИ ПО ТОНУ:
@@ -248,7 +259,7 @@ def get_perplexity_recommendations(
 - Если чувствуешь, что клиент запутался, не навязывай страну и место (особенно Черногорию), а мягко помоги ему определиться вопросом.
 
 ТВОЙ ОТВЕТ:
-- Не более 25-41 слов БЕЗ УЧЕТА УТОЧНЯЮЩЕГО ВОПРОСА В КОНЦЕ.  
+- Не более 17-18 слов БЕЗ УЧЕТА УТОЧНЯЮЩЕГО ВОПРОСА В КОНЦЕ.  
 - Максимально человечный и полезный комментарий по ситуации.
 - Проанализируй переписку и в конце задай ОДИН уточняющий вопрос для следующего диалога и конверсии в покупку тура. Вопрос должен идти в самом конце ответа и самом последнем абзаце.
 - Вопрос в конце должен раскрывать потребность человека и при этом чтобы каждый следующий вопрос не повторял предыдущие, проверял на адекватность, квалифицировал как лида и двигал по маркетинговой воронке к покупке тура у агента.
@@ -276,7 +287,6 @@ def get_perplexity_recommendations(
 8. Время: \"У Вас строгие ли даты поездки или возможны гибкие даты ±3 дня?\"
 (вопрос уместен, если клиент выбрал конкретные даты поездки)
 9. Конверсия в продажу: \"Удобно ли Вам созвониться или встретиться у нас в офисе для обсуждения подборки туров?\"
-
 
 Используй следующие критерии:
 Критерий 1 - Тип поездки: {trip_type}
@@ -322,14 +332,14 @@ def get_perplexity_recommendations(
             # ВОТ ЭТА ПРАВКА: вызываем функцию очистки перед тем как вернуть текст
             return clean_perplexity_response(content)
         else:
-            return f"❌ Ошибка API: {response.status_code} - {response.text} - {response.text}"
+            return "Извините, подождите немного." #return f"❌ Ошибка API: {response.status_code} - {response.text} - {response.text}"
             
     except requests.exceptions.Timeout:
-        return "❌ Превышено время ожидания ответа от API. Попробуйте позже."
+        return "Извините, подождите немного." #return "❌ Превышено время ожидания ответа от API. Попробуйте позже."
     except requests.exceptions.RequestException as e:
-        return f"❌ Ошибка соединения с API: {str(e)}"
+        return "Извините, подождите немного." #return f"❌ Ошибка соединения с API: {str(e)}"
     except Exception as e:
-        return f"❌ Неожиданная ошибка: {str(e)}"
+        return "Извините, подождите немного." #return f"❌ Неожиданная ошибка: {str(e)}"
 
 @register_tool(tags=["error_handling", "goal_9"])
 def handle_user_error() -> str:
@@ -768,6 +778,8 @@ async def process_travel_request(message: str, user_id: str = None) -> Dict[str,
         Dictionary with response data including memory and status
     """
     try:
+        if user_id:
+            log_conversation(user_id, "Пользователь", message)
         # Проверяем состояние разговора
         conversation_active = agent_state.get("conversation_active", True)
         goal_completed = agent_state.get("goal_completed", False)
@@ -787,6 +799,11 @@ async def process_travel_request(message: str, user_id: str = None) -> Dict[str,
                 "type": item["type"],
                 "content": item["content"]
             })
+        if user_id:
+            for item in reversed(memory_list):
+                if item["type"] == "assistant":
+                    log_conversation(user_id, "Ассистент", item["content"])
+                    break
 
         # Determine status based on current goal
         if agent_state["current_goal"] > 8 or agent_state.get("goal_completed", False):
@@ -795,7 +812,7 @@ async def process_travel_request(message: str, user_id: str = None) -> Dict[str,
             status = "in_progress"
 
         # Имитация человеческой задержки перед ответом
-        await asyncio.sleep(random.randint(1, 1))
+        await asyncio.sleep(random.randint(10, 17))
 
         return {
             "memory": memory_list,
