@@ -778,13 +778,26 @@ async def process_travel_request(message: str, user_id: str = None) -> Dict[str,
         Dictionary with response data including memory and status
     """
     try:
-        if user_id:
-            log_conversation(user_id, "Пользователь", message)
-        # Проверяем состояние разговора
+        # 1. Сначала проверяем, не является ли сообщение командой сброса
+        if message.lower() in ["/start", "привет", "старт", "начать", "start"]:
+            reset_agent_state()
+            # После сброса диалог активен
+        
+        # 2. Проверяем состояние разговора
         conversation_active = agent_state.get("conversation_active", True)
         goal_completed = agent_state.get("goal_completed", False)
         current_goal = agent_state.get("current_goal", 1)
-        
+
+        # 3. Если диалог уже завершен — игнорируем последующие сообщения
+        if not conversation_active:
+            return {
+                "memory": [],
+                "status": "completed",
+                "text": None,
+                "current_goal": current_goal,
+                "conversation_active": False
+            }
+
         # Сбрасываем состояние только если разговор явно завершен или не активен
         if goal_completed or not conversation_active:
             reset_agent_state()
@@ -811,12 +824,24 @@ async def process_travel_request(message: str, user_id: str = None) -> Dict[str,
         else:
             status = "in_progress"
 
+        # Получаем текст последнего сообщения ассистента для удобства
+        assistant_text = None
+        for item in reversed(memory_list):
+            if item["type"] == "assistant":
+                assistant_text = item["content"]
+                break
+
+        if assistant_text:
+            # Убираем точку, если она висит отдельной строкой в конце
+            assistant_text = assistant_text.replace('\n.', '').strip()
+
         # Имитация человеческой задержки перед ответом
-        await asyncio.sleep(random.randint(10, 17))
+        await asyncio.sleep(random.randint(10, 15))
 
         return {
             "memory": memory_list,
             "status": status,
+            "text": assistant_text,
             "current_goal": agent_state["current_goal"],
             "conversation_active": agent_state.get("conversation_active", True)
         }

@@ -222,19 +222,31 @@ async def travel_handler(message: Message):
     user_id = f"vk_{message.from_id}"  # Добавляем префикс платформы
     user_text = message.text
 
-    # 1. Запускаем "вечное" печатание в фоновом режиме
+    # 0. Логируем входящее сообщение сразу в самом начале
+    from travel_agent import log_conversation
+    log_conversation(user_id, "Пользователь", user_text)
+
+    # 1. Проверка команды сброса (ручной сброс) ПЕРЕД всем остальным
+    if user_text.lower() in ["/start", "привет", "старт", "начать", "start"]:
+        from telegram_bot import reset_user_session
+        reset_user_session(user_id)
+        await message.answer("Давайте начнем сначала:) Напишите когда вы планируете вашу поездку?")
+        return
+
+    # 2. Запускаем "вечное" печатание в фоновом режиме
     typing_task = asyncio.create_task(keep_typing(message.peer_id))
     # ---------------------
 
     try:
-        # 2. Ждем ответа от агента (тут может быть долгая задержка)
+        # 3. Ждем ответа от агента (тут может быть долгая задержка)
         response = await process_travel_agent_message(user_id, user_text)
 
-        # 3. Как только ответ готов, останавливаем "печатание"
+        # 4. Как только ответ готов, останавливаем "печатание"
         typing_task.cancel()
 
-        # 4. Отправляем сам ответ
-        await message.answer(response)
+        # 5. Если ответ не "__ignore__", отправляем его
+        if response != "__ignore__":
+            await message.answer(response)
 
     except Exception as e:
         typing_task.cancel()

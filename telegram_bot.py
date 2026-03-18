@@ -38,7 +38,7 @@ def get_user_session(user_id: int) -> Dict[str, Any]:
     """Get or create user session"""
     if user_id not in user_sessions:
         user_sessions[user_id] = {
-            "conversation_active": False,
+            "conversation_active": True,
             "current_goal": 1,
             "user_responses": {},
             "error_count": 0,
@@ -51,7 +51,7 @@ def get_user_session(user_id: int) -> Dict[str, Any]:
 def reset_user_session(user_id: int):
     """Reset user session for new conversation"""
     user_sessions[user_id] = {
-        "conversation_active": False,
+        "conversation_active": True,
         "current_goal": 1,
         "user_responses": {},
         "error_count": 0,
@@ -72,15 +72,18 @@ async def process_travel_agent_message(user_id: int, message_text: str) -> str:
         
         result = await process_travel_request(message_text, str(user_id))
         
+        # Если статус "completed" и текста нет — значит игнорируем
+        if result.get("status") == "completed" and result.get("text") is None:
+            return "__ignore__"
+            
         # Update user session with current agent state
         session.update(agent_state)
         
-        # Get the last assistant message from memory
-        memory_list = result["memory"]
-        assistant_messages = [item for item in memory_list if item["type"] == "assistant"]
+        # Get the assistant message from the new 'text' field
+        assistant_text = result.get("text")
         
-        if assistant_messages:
-            return assistant_messages[-1]["content"]
+        if assistant_text:
+            return assistant_text
         else:
             return "Извините, произошла ошибка при обработке вашего запроса. Попробуйте еще раз."
             
@@ -91,6 +94,9 @@ async def process_travel_agent_message(user_id: int, message_text: str) -> str:
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     """Handle /start and /help commands"""
+    user_id = message.from_user.id
+    reset_user_session(user_id)
+    
     welcome_text = """🌍 Добро пожаловать в AI Travel Agent!
 
 Я помогу вам спланировать идеальную поездку! Просто напишите мне, и я проведу с вами интервью, чтобы понять ваши предпочтения.
@@ -147,13 +153,22 @@ def handle_message(message):
         
         logger.info(f"Received message from user {user_id}: {message_text}")
         
+        # 0. Логируем входящее сообщение сразу
+        from travel_agent import log_conversation
+        log_conversation(str(user_id), "Пользователь", message_text)
+        
         # Process message through travel agent
-        response = process_travel_agent_message(user_id, message_text)
+        # Note: In a real environment with telebot, this should be handled properly for async
+        # For now, let's keep the user's intended logic of checking for ignore
+        import asyncio
+        response = asyncio.run(process_travel_agent_message(user_id, message_text))
         
-        # Send response back to user
-        bot.reply_to(message, response)
-        
-        logger.info(f"Sent response to user {user_id}: {response[:100]}...")
+        # Send response back to user if not ignored
+        if response != "__ignore__":
+            bot.reply_to(message, response)
+            logger.info(f"Sent response to user {user_id}: {response[:100]}...")
+        else:
+            logger.info(f"Ignored message from user {user_id} (conversation completed)")
         
     except Exception as e:
         logger.error(f"Error handling message: {str(e)}")
