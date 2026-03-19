@@ -38,7 +38,7 @@ agent_state = {
     "current_goal": 1,
     "user_responses": {},
     "error_count": 0,
-    "max_errors": 3,
+    "max_errors": 11,
     "goal_completed": False,
     "conversation_active": True,
     "has_asked_goal_1": False,
@@ -65,7 +65,7 @@ def reset_agent_state():
         "current_goal": 1,
         "user_responses": {},
         "error_count": 0,
-        "max_errors": 3,
+        "max_errors": 11,
         "goal_completed": False,
         "conversation_active": True,
         "has_asked_goal_1": False,
@@ -221,10 +221,11 @@ def get_perplexity_recommendations(
     
     # Construct the prompt according to new requirements
     prompt = f"""
-    Ты — ведущий и опытный тревел-эксперт оказывающий консультативную помощь для подбора тура. Ты продолжаешь уже начатый диалог, который тебе передают со мной. Критерии 1-8 (находятся в конце запроса).  Я - турист который хочет консультацию. 
+Ты — ведущий и опытный тревел-эксперт оказывающий консультативную помощь для подбора тура. Ты продолжаешь уже начатый диалог, который тебе передают со мной. Критерии 1-8 (находятся в конце запроса).  Я - турист который хочет консультацию. 
 Твоя задача — провести глубокую и вежливую консультацию и беседу, общаясь строго на \"Вы\". Для этого нужно пообщаться со мной, объяснить мне, так чтобы мне стало интересно то, что ты предлагаешь и созвониться с менеджером. Ты должен показать свою экспертность. Ты работаешь только с пакетными турами. 
 Тебя никто не заставляет ничего продавать, главное помочь мне определиться с выбором тура и раскрыть мою потребность.
-ОЧЕНЬ ВАЖНО:  в ответе давай только описание без названия цен! Если допытываюсь по поводу цен и стоимости, то вежливо предложи созвониться с менеджером. Цены может назвать мне менеджер на звонке в случае заинтересованности мной.  Скажи что цены уточнит менеджер.  Всегда отвечай на русском языке даже в случае ошибок.
+ОЧЕНЬ ВАЖНО:  в ответе давай только описание без названия цен! Если допытываюсь по поводу цен и стоимости, то вежливо предложи созвониться с менеджером. Цены может назвать мне менеджер на звонке в случае заинтересованности мной. 
+Скажи что цены уточнит менеджер.  Всегда отвечай на русском языке даже в случае ошибок. Не отвечай в духе: "в доступных мне данных информация о турах в эту заброшенную страну отсутствует". Всегда помогай конкретно по тому направлению по которому пришел запрос в данный момент, остальные забудь, только если явно не спросят, начтут сомневаться и просить совета.
 
 
 ФОРМАТ: 
@@ -255,7 +256,7 @@ def get_perplexity_recommendations(
 15. Если прошу конкретику (отели, места и т.п.) — В конце такого ответа добавь вопрос: \"Хотите, я подготовлю для Вас подборку прямых ссылок на проверенные отели/достопримечательности по этому направлению?\".
 16. Говори как живой человек, естественно.
 17. Если я проявляю к чему-то интерес, например к отелю, то можешь при его запросе дать больше информации или ссылку на этот объект, но сам без спроса ничего не присылай.
-18. НЕ предлагай Черногорию, Казахстан, если я явно о них не спросил.
+18. НЕ предлагай Черногорию, Казахстан,  Россию, Италию и другие страны, если я явно о них не спросил.
 19. Если я не определился с местом или путаюсь, не выбирай за  меня. Вместо этого задай наводящий вопрос (например, о предпочтительном климате, типе пляжа или длительности перелёта), чтобы помочь мне сузить выбор!
 20. Также не надоедай постоянно вопросом в конце
 когда предлагаешь созвониться или встретиться с менеджером  Делай это не чаще чем через 2-3 ответа и только когда это уместно.
@@ -264,7 +265,7 @@ def get_perplexity_recommendations(
 ИНСТРУКЦИИ ПО ТОНУ:
 - Говори как живой человек, но сохраняй статус эксперта.
 - Будь вежлив, избегай фамильярности.
-- Если чувствуешь, что я запутался, не навязывай страну и место (особенно Черногорию, Казахстан), а мягко помоги мне определиться вопросом для выбора места.
+- Если чувствуешь, что я запутался, не навязывай страну и место (Черногорию, Казахстан, Россию, Италию  другие страны), если я явно о них не спросил, мягко помоги мне определиться вопросом для выбора места.
 
 ТВОЙ ОТВЕТ:
 - Максимально человечный и полезный комментарий по ситуации.
@@ -331,7 +332,7 @@ def get_perplexity_recommendations(
             "https://api.perplexity.ai/chat/completions",
             headers=headers,
             json=data,
-            timeout=30
+            timeout=100
         )
 
         if response.status_code == 200:
@@ -341,14 +342,37 @@ def get_perplexity_recommendations(
             # ВОТ ЭТА ПРАВКА: вызываем функцию очистки перед тем как вернуть текст
             return clean_perplexity_response(content)
         else:
-            return "Извините, подождите немного." #return f"❌ Ошибка API: {response.status_code} - {response.text} - {response.text}"
-            
-    except requests.exceptions.Timeout:
-        return "Извините, подождите немного." #return "❌ Превышено время ожидания ответа от API. Попробуйте позже."
-    except requests.exceptions.RequestException as e:
-        return "Извините, подождите немного." #return f"❌ Ошибка соединения с API: {str(e)}"
-    except Exception as e:
-        return "Извините, подождите немного." #return f"❌ Неожиданная ошибка: {str(e)}"
+            # 1. Записываем ошибку в лог, чтобы видеть её в PyCharm/PM2
+            logger.error(
+                f"❌ Ошибка API: {response.status_code} - {response.text} - {response.text}")
+            return get_perplexity_recommendations(
+                trip_type,
+                destination,
+                group_size,
+                travel_dates,
+                departure_city,
+                budget,
+                children_info,
+                history_dialogue
+            )
+
+    except (requests.exceptions.Timeout, requests.exceptions.RequestException, Exception) as e:
+        # 1. Записываем ошибку в лог, чтобы видеть её в PyCharm/PM2
+        logger.error(f"Произошла ошибка: {str(e)}. Пробую вызвать функцию get_perplexity_recommendations еще раз...")
+        # 2. Небольшая пауза, чтобы не спамить API мгновенно при ошибке сети
+        import time
+        time.sleep(2)
+        # 3. РЕКУРСИЯ: функция вызывает саму себя с теми же параметрами
+        return get_perplexity_recommendations(
+            trip_type,
+            destination,
+            group_size,
+            travel_dates,
+            departure_city,
+            budget,
+            children_info,
+            history_dialogue
+        )
 
 @register_tool(tags=["error_handling", "goal_9"])
 def handle_user_error() -> str:
@@ -548,7 +572,7 @@ def create_travel_agent():
         "current_goal": 1,
         "user_responses": {},
         "error_count": 0,
-        "max_errors": 3,
+        "max_errors": 11,
         "goal_completed": False,
         "conversation_active": True,
         "has_asked_goal_1": False,
@@ -782,43 +806,46 @@ async def process_user_response(user_response: str):
             history_dialogue = "\n".join(dialogue_history) if dialogue_history else ""
 
             # Retry logic: скрываем "восстание" модели от пользователя
-            stop_phrases = ["perplexity", "я не могу", "i cannot"]
+            stop_phrases = [
+                "perplexity", "я не могу", "i cannot", "поисковый ассистент",
+                "ассистент", "прошу прощения",
+                "я не являюсь", "i'm a search assistant"
+            ]
+            max_retries = 11
             attempt = 0
+            valid_response = False
             perplexity_answer = ""
-            while attempt < 11:
+
+            while attempt < max_retries and not valid_response:
                 attempt += 1
-                candidate = get_perplexity_recommendations(
-                    trip_type,
-                    destination,
-                    group_size,
-                    travel_dates,
-                    departure_city,
-                    budget,
-                    children_info,
-                    history_dialogue,
+
+                # Твой вызов Perplexity (оставляем переменные как в коде)
+                perplexity_answer = get_perplexity_recommendations(
+                    trip_type, destination, group_size, travel_dates,
+                    departure_city, budget, children_info, history_dialogue
                 )
-                candidate_l = (candidate or "").lower()
-                if any(p in candidate_l for p in stop_phrases):
-                    # Не сохраняем, не показываем, повторяем
+
+                # ПРОВЕРКА: если есть хоть одна фраза - входим в True
+                is_bad = any(phrase.lower() in perplexity_answer.lower() for phrase in stop_phrases)
+
+                if not is_bad:
+                    valid_response = True
+                else:
+                    # Если ответ плохой - просто ждем секунду и идем на следующий круг While
                     await asyncio.sleep(1)
-                    continue
-                perplexity_answer = candidate or ""
-                break
 
-            if not perplexity_answer:
-                # После 11 попыток — мягкий фолбэк и прекращаем цикл
-                fallback_text = "Подождите, пожалуйста, я сейчас уточняю информацию. Скоро отвечу! Хорошо?"
-                memory = Memory()
-                memory.add_memory({"type": "user", "content": user_response})
-                memory.add_memory({"type": "assistant", "content": fallback_text})
-                return memory
+                # Если после всех попыток всё еще плохо - выдаем заглушку
+            if not valid_response:
+                perplexity_answer = "Подождите, пожалуйста, я сейчас занимаюсь вашим запросом. Подождете, хорошо?"
+            else:
+                # Очистка артефактов (убираем '\n.' в конце и лишние переносы/точки)
+                perplexity_answer = re.sub(r"[\n\.]+\Z", "", perplexity_answer.strip())
 
-            # Очистка артефактов (убираем '\n.' в конце и лишние переносы/точки)
-            perplexity_answer = re.sub(r"[\n\.]+\Z", "", perplexity_answer.strip())
+                if "dialogue_history" not in responses:
+                    responses["dialogue_history"] = []
+                dialogue_entry = f"Вопрос: {agent_state.get('last_agent_response', '')} | Ответ: {user_response}"
+                responses["dialogue_history"].append(dialogue_entry)
 
-            # Сохраняем успешный шаг в историю и обновляем last_agent_response
-            dialogue_entry = f"Вопрос: {last_agent_question} | Ответ: {user_response}"
-            responses["dialogue_history"].append(dialogue_entry)
             agent_state["last_agent_response"] = perplexity_answer
 
             memory = Memory()
@@ -886,12 +913,10 @@ async def process_travel_request(message: str, user_id: str = None) -> Dict[str,
 
         # Формируем запрос с явным указанием локации, чтобы очистить поиск Perplexity
         current_dest = agent_state["user_responses"].get("destination", "любое направление")
-        enriched_message = f"ЛОКАЦИЯ: {current_dest}. ЗАПРОС: {message}"
-
-        # Отправляем уже обогащенный запрос
+        #enriched_message = f"ЛОКАЦИЯ: {current_dest}. ЗАПРОС: {message}"
 
         # Всегда трактуем входящее сообщение как ответ на текущую цель
-        final_memory = await process_user_response(enriched_message)
+        final_memory = await process_user_response(message)
 
         # Convert memory to list format for JSON response
         memory_list = []
@@ -924,7 +949,7 @@ async def process_travel_request(message: str, user_id: str = None) -> Dict[str,
             assistant_text = assistant_text.replace('\n.', '').strip()
 
         # Имитация человеческой задержки перед ответом
-        await asyncio.sleep(random.randint(10, 15))
+        await asyncio.sleep(random.randint(1, 1))
 
         return {
             "memory": memory_list,

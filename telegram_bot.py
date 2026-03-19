@@ -9,6 +9,7 @@ import logging
 from typing import Dict, Any, Optional
 from telebot import TeleBot, types
 from telebot.util import quick_markup
+import asyncio
 import json
 from dotenv import load_dotenv
 
@@ -21,9 +22,20 @@ load_dotenv()
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    force=True  # ПРИНУДИТЕЛЬНО ПЕРЕЗАПИСАТЬ КОНФИГ
 )
 logger = logging.getLogger(__name__)
+
+# Если логгер пустой, добавим ему вывод в консоль вручную
+if not logger.handlers:
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+    # Чтобы логи не дублировались и не уходили в корень, если не нужно
+    logger.propagate = False
 
 # Get Telegram bot token from environment
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8197325061:AAG1hBi0upczFxDKg8T9KtTnmGBtUQQzxiM")
@@ -42,7 +54,7 @@ def get_user_session(user_id: int) -> Dict[str, Any]:
             "current_goal": 1,
             "user_responses": {},
             "error_count": 0,
-            "max_errors": 3,
+            "max_errors": 11,
             "goal_completed": False,
             "has_asked_goal_1": False
         }
@@ -55,41 +67,51 @@ def reset_user_session(user_id: int):
         "current_goal": 1,
         "user_responses": {},
         "error_count": 0,
-        "max_errors": 3,
+        "max_errors": 11,
         "goal_completed": False,
         "has_asked_goal_1": False
     }
 
 async def process_travel_agent_message(user_id: int, message_text: str) -> str:
-    """Process message through travel agent and return response (async)."""
+    """Обработка сообщения для тревел-агента с защитой от пустых ответов."""
     try:
+        # 1. Сначала сбрасываем или получаем сессию (как у тебя в коде)
+        # reset_agent_state() # Если нужно для теста, но обычно сессия живет
+
+        max_retries = 7
+        attempt = 0
+        assistant_text = ""
+
         # Get user session
         session = get_user_session(user_id)
-        
+
         # Update global agent state with user session
         global agent_state
         agent_state.update(session)
-        
-        result = await process_travel_request(message_text, str(user_id))
-        
-        # Если статус "completed" и текста нет — значит игнорируем
-        if result.get("status") == "completed" and result.get("text") is None:
-            return "__ignore__"
-            
-        # Update user session with current agent state
-        session.update(agent_state)
-        
-        # Get the assistant message from the new 'text' field
-        assistant_text = result.get("text")
-        
-        if assistant_text:
-            return assistant_text
-        else:
-            return "Извините, произошла ошибка при обработке вашего запроса. Попробуйте еще раз."
-            
+
+        # ЦИКЛ ПЕРЕЗАПУСКА, ЕСЛИ ТЕКСТ ПУСТОЙ
+        while attempt < max_retries and not assistant_text:
+            attempt += 1
+            result = await process_travel_request(message_text, str(user_id))
+            # Если статус "completed" и текста нет — значит игнорируем
+            if result.get("status") == "completed" and result.get("text") is None:
+                return "__ignore__"
+            # Update user session with current agent state
+            session.update(agent_state)
+            # Get the assistant message from the new 'text' field
+            assistant_text = result.get("text")
+            if assistant_text:
+                return assistant_text
+            await asyncio.sleep(1)
+
+        # Если после 3 попыток пусто - выдаем твой вежливый костыль
+        if not assistant_text:
+            return "Подождите, пожалуйста, я сейчас занимаюсь вашим запросом. Подождете, хорошо?"
+
     except Exception as e:
-        logger.error(f"Error processing travel agent message: {str(e)}")
-        return f"Произошла ошибка: {str(e)}. Попробуйте еще раз."
+        logger.error(f"Error in process_travel_agent_message: {str(e)}")
+        # Если произошла именно техническая ошибка (Exception)
+        return "Извините, я сейчас занимаюсь вашим запросом. Подождете, хорошо?"
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
